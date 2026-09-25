@@ -1,0 +1,3 @@
+---
+inference_user_name: "{{ inference_user | default('inference') }}"
+inference_user_ssh_keys: "{{ inference_ssh_keys | default([]) }}"

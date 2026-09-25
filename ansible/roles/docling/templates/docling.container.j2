@@ -1,0 +1,26 @@
+[Unit]
+Description=Docling document parsing server (RAG)
+After=llm-network.service
+
+[Container]
+ContainerName=docling
+Image={{ docling_image }}
+Network=llm.network
+{% if docling_gpu | default(false) %}
+AddDevice=nvidia.com/gpu=all
+{% endif %}
+# Layout/table/OCR models cache, pre-created by Ansible.
+Volume=%h/docling/artifacts:/app/data
+# UI for debugging only, from the VM itself (Open WebUI talks over the Podman network).
+PublishPort=127.0.0.1:{{ docling_port }}:{{ docling_port }}
+{% for key, value in docling_env.items() %}
+Environment={{ key }}={{ value }}
+{% endfor %}
+
+[Service]
+# First start pulls OCR/layout models.
+TimeoutStartSec=600
+Restart=always
+
+[Install]
+WantedBy=default.target

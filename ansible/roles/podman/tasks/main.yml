@@ -1,0 +1,107 @@
+---
+
+- name: Install Podman and rootless container dependencies
+  ansible.builtin.apt:
+    name:
+      - podman
+      - podman-docker
+      - podman-compose
+      - docker-compose-v2
+      - uidmap
+      - slirp4netns
+      - fuse-overlayfs
+      - dbus-user-session
+      - curl
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Silence Docker emulation banner
+  ansible.builtin.file:
+    path: /etc/containers/nodocker
+    state: touch
+    mode: '0644'
+    owner: root
+    group: root
+    modification_time: preserve
+    access_time: preserve
+
+- name: Create docker-compose compatibility symlink
+  ansible.builtin.file:
+    src: /usr/bin/podman-compose
+    dest: /usr/local/bin/docker-compose
+    state: link
+    force: true
+
+- name: Create systemd user service drop-in directory for cgroup delegation
+  ansible.builtin.file:
+    path: /etc/systemd/system/user@.service.d
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Configure cgroup v2 controller delegation for user sessions
+  ansible.builtin.template:
+    src: delegate.conf.j2
+    dest: /etc/systemd/system/user@.service.d/delegate.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd daemon
+
+
+- name: Get inference user UID
+  ansible.builtin.command:
+    cmd: "id -u {{ podman_user }}"
+  register: podman_uid_result
+  changed_when: false
+
+- name: Ensure user runtime directory exists
+  ansible.builtin.file:
+    path: "/run/user/{{ podman_uid_result.stdout }}"
+    state: directory
+    owner: "{{ podman_user }}"
+    group: "{{ podman_user }}"
+    mode: '0700'
+
+- name: Enable and start rootless Podman socket for inference user
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    scope: user
+    state: started
+    enabled: true
+  become: true
+  become_user: "{{ podman_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ podman_uid_result.stdout }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ podman_uid_result.stdout }}/bus"
+
+- name: Create the Quadlet directory for the inference user
+  ansible.builtin.file:
+    path: "/home/{{ podman_user }}/.config/containers/systemd"
+    state: directory
+    owner: "{{ podman_user }}"
+    group: "{{ podman_user }}"
+    mode: '0755'
+
+- name: Deploy the shared Podman network Quadlet
+  ansible.builtin.template:
+    src: llm.network.j2
+    dest: "/home/{{ podman_user }}/.config/containers/systemd/llm.network"
+    owner: "{{ podman_user }}"
+    group: "{{ podman_user }}"
+    mode: '0644'
+
+- name: Reload user systemd and start the shared network
+  ansible.builtin.systemd_service:
+    name: llm-network.service
+    scope: user
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true
+  become_user: "{{ podman_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ podman_uid_result.stdout }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ podman_uid_result.stdout }}/bus"

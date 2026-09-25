@@ -1,0 +1,65 @@
+---
+sglang_user: "{{ inference_user | default('inference') }}"
+
+# SGLang v0.5.20 ships DFlash2DraftModel, so the Qwen3.8 DFlash2 draft works on the official release.
+sglang_image: "docker.io/lmsysorg/sglang:v0.5.20-cu130"
+
+sglang_port: 30000
+
+# Bearer token for the OpenAI-compatible API; empty = no auth (VLAN is the only boundary).
+# When set, every endpoint except /health, /ready and /metrics requires it.
+sglang_api_key: ""
+
+# Target model: HF repo id online, bundle directory under /models when airgapped.
+# unsloth/Qwen3.8-27B-NVFP4: NVFP4 body + FP8 lm_head (requires SGLang >= v0.5.19).
+sglang_model_path: "{{ '/models/qwen3.8-27b-nvfp4' if (airgap_mode | default(false)) else 'unsloth/Qwen3.8-27B-NVFP4' }}"
+sglang_served_model_name: "qwen3.8-27b"
+
+# Speculative decoding (DFlash2 draft). Empty sglang_draft_model_path disables it.
+# NVFP4-calibrated draft (~1.4 GB): same acceptance as the BF16 draft for a third of the VRAM.
+sglang_speculative_algorithm: "DFLASH"
+sglang_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode | default(false)) else 'maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal' }}"
+sglang_draft_model_quantization: "modelopt_fp4"
+sglang_speculative_num_draft_tokens: 8
+
+# 0.85 leaves 4.8 GB free for the embedding pool; docling_gpu needs ~5 GB, hence 0.78.
+sglang_mem_fraction_static: "{{ '0.78' if (docling_gpu | default(false)) else '0.85' }}"
+
+# Extra launch flags; RTX PRO 5000 Blackwell 48 GB profile (see launch_server --help).
+# Budget: 0.85 static → ~17 GB fp8 KV ≈ 520K tokens; KV 4-bit unsupported (hybrid GDN).
+sglang_extra_args:
+  - "--context-length 262144"
+  - "--kv-cache-dtype fp8_e4m3"
+  - "--mem-fraction-static {{ sglang_mem_fraction_static }}"
+  - "--attention-backend flashinfer"
+  - "--chunked-prefill-size 4096"
+  - "--max-running-requests 4"
+  - "--cuda-graph-max-bs 4"
+  - "--reasoning-parser qwen3"
+  - "--tool-call-parser qwen3_coder"
+  # GDN state-pool calibration for the BF16-LMHead checkpoint.
+  - "--mamba-full-memory-ratio 6.08"
+  - "--mamba-ssm-dtype bfloat16"
+  - "--mamba-radix-cache-strategy extra_buffer"
+
+# GPU via CDI. Requires the nvidia role (nvidia_enabled: true).
+sglang_gpu: "{{ nvidia_enabled | default(false) }}"
+
+# First start downloads tens of GB of weights: disable the systemd start timeout.
+sglang_timeout_start_sec: "0"
+
+# Airgap: mount the bundle models read-only and forbid any Hugging Face download.
+sglang_offline: "{{ airgap_mode | default(false) }}"
+
+# Bundle location on the VM (airgap only).
+sglang_bundle_dir: "{{ llm_bundle_dir | default('/airgap-bundle') }}"
+
+# RAG embeddings for Open WebUI (/v1/embeddings); SGLang serves one model per process.
+sglang_embedding_enabled: false
+# Qwen3-Embedding-0.6B: decoder-style, needs --is-embedding; 32K ctx, 1024-dim, ungated.
+sglang_embedding_model_path: "{{ '/models/qwen3-embedding-0.6b' if (airgap_mode | default(false)) else 'Qwen/Qwen3-Embedding-0.6B' }}"
+sglang_embedding_served_model_name: "qwen3-embedding-0.6b"
+sglang_embedding_port: 30001
+# GPU-sharing instance: small static pool (0.05 x 48 GB = 2.4 GB) covers bf16 weights + activations.
+sglang_embedding_extra_args:
+  - "--mem-fraction-static 0.05"

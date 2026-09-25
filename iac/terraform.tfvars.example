@@ -1,0 +1,85 @@
+# Copy this file to 'terraform.tfvars' and fill in your values.
+
+# --- Proxmox API (mandatory) ---
+proxmox_api_url   = "https://10.x.x.x:8006/api2/json"
+proxmox_api_token = "root@pam!opentofu=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Set to false if you have a valid TLS certificate on Proxmox
+proxmox_insecure = true
+
+# SSH user to access Proxmox nodes (default: root)
+# proxmox_ssh_username = "root"
+
+# --- SSH Access (mandatory) ---
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc... myuser@myworkstation"
+
+# --- VM Identity ---
+# vm_name        = "vm-llm-inference"
+vm_node_name    = "pve-node1"
+# vm_id          = null                  # Proxmox auto-assigns next free ID
+# vm_description = "Managed by OpenTofu - LLM Inference VM (SGLang / Open WebUI / RAG)"
+# vm_tags        = ["llm-inference", "opentofu"]
+
+# --- VM Resources ---
+# cpu_cores        = 8
+# cpu_type         = "host"              # 'host' recommended for GPU passthrough
+# memory_mb        = 16384
+# disk_size_gb     = 200
+# disk_datastore_id = "local-lvm"
+
+# --- VM Hardware ---
+# machine_type      = "q35"               # q35 required for GPU passthrough
+# bios              = "ovmf"
+# vga_type          = "virtio"
+# keyboard_layout   = "fr"
+# start_on_boot     = true
+
+# Set to false on GPU VMs: Secure Boot blocks the unsigned NVIDIA DKMS modules.
+# efi_pre_enrolled_keys = false
+
+# --- Network (mandatory) ---
+network_interfaces = [
+  {
+    bridge  = "vmbr0"
+    address = "10.0.0.10/24"
+    gateway = "10.0.0.254"
+    # vlan_id     = 100
+    # firewall   = true
+    # model      = "virtio"
+  }
+]
+
+# --- GPU / PCI Passthrough (optional; SGLang CUDA requires an NVIDIA GPU passed through) ---
+# pci_devices = [
+#   {
+#     # Option A: Proxmox cluster resource mapping (recommended)
+#     mapping = "gpu"
+#
+#     # Option B: Direct PCI ID (omit the .X suffix to passthrough all functions, e.g., "0000:01:00")
+#     # id    = "0000:01:00"
+#
+#     pcie   = true
+#     rombar = true
+#     xvga   = false                      # Set true if primary display
+#   }
+# ]
+
+# --- Optional Global Infrastructure Settings ---
+# Cloud-Init Image & Snippets
+# ubuntu_cloud_image_url      = "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
+# ubuntu_cloud_image_filename = "ubuntu-26.04-server-cloudimg-amd64.img"
+# image_datastore_id          = "local"
+# enable_cloudinit_snippet    = true     # Starts qemu-guest-agent if present in image (no apt update/packages)
+# snippet_datastore_id        = "local"   # Datastore where snippets are stored (must support 'snippets')
+
+# --- Airgapped deployment (see ansible/group_vars/all.yml.example) ---
+# Node offline: upload cloudimg/*.img to the node 'local' datastore beforehand.
+# cloud_image_preuploaded = true
+#
+# No apt at first boot: the playbook installs qemu-guest-agent from the bundle.
+# enable_cloudinit_snippet = false
+
+# Cloud-Init User & DNS
+# vm_user     = "ubuntu"
+# dns_servers = ["9.9.9.9", "1.1.1.1"]
+# dns_domain  = "."                       # '.' represents no search domain in Proxmox

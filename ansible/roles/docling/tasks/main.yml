@@ -1,0 +1,87 @@
+---
+# Deploys docling-serve (RAG parsing) as a Quadlet-managed rootless container.
+
+- name: Assert the GPU host role is enabled when GPU access is requested
+  ansible.builtin.assert:
+    that:
+      - not (docling_gpu | default(false)) or (nvidia_enabled | default(false))
+    fail_msg: >-
+      docling_gpu is true but nvidia_enabled is false: enable the nvidia role,
+      or set docling_gpu to false for a CPU deployment.
+
+- name: Create the Quadlet directory for the inference user
+  ansible.builtin.file:
+    path: "/home/{{ docling_user }}/.config/containers/systemd"
+    state: directory
+    owner: "{{ docling_user }}"
+    group: "{{ docling_user }}"
+    mode: '0755'
+
+- name: Create the Docling artifacts directory
+  ansible.builtin.file:
+    path: "/home/{{ docling_user }}/docling/artifacts"
+    state: directory
+    owner: "{{ docling_user }}"
+    group: "{{ docling_user }}"
+    mode: '0755'
+
+- name: Deploy the Docling Quadlet
+  ansible.builtin.template:
+    src: docling.container.j2
+    dest: "/home/{{ docling_user }}/.config/containers/systemd/docling.container"
+    owner: "{{ docling_user }}"
+    group: "{{ docling_user }}"
+    mode: '0644'
+
+- name: Get inference user UID
+  ansible.builtin.command:
+    cmd: "id -u {{ docling_user }}"
+  register: docling_uid_result
+  changed_when: false
+
+- name: Copy the pre-baked model artifacts from the bundle (airgap)
+  ansible.builtin.copy:
+    src: "{{ docling_bundle_dir }}/docling-artifacts/"
+    dest: "/home/{{ docling_user }}/docling/artifacts/"
+    remote_src: true
+    mode: preserve
+    owner: "{{ docling_user }}"
+    group: "{{ docling_user }}"
+  when: docling_offline | default(false)
+
+- name: Check if the Docling image is already loaded (airgap)
+  ansible.builtin.command:
+    cmd: "podman image exists {{ docling_image }}"
+  register: docling_image_loaded
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: "{{ docling_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ docling_uid_result.stdout }}"
+  when: docling_offline | default(false)
+
+- name: Load the Docling image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "podman load -i {{ docling_bundle_dir }}/images/docling.tar"
+  become: true
+  become_user: "{{ docling_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ docling_uid_result.stdout }}"
+  changed_when: true
+  when:
+    - docling_offline | default(false)
+    - docling_image_loaded.rc != 0
+
+- name: Reload user systemd and restart Docling
+  ansible.builtin.systemd_service:
+    name: docling.service
+    scope: user
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+  become_user: "{{ docling_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ docling_uid_result.stdout }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ docling_uid_result.stdout }}/bus"

@@ -1,0 +1,117 @@
+---
+
+- name: Validate inference_user_name format
+  ansible.builtin.assert:
+    that:
+      - inference_user_name is defined
+      - inference_user_name is string
+      - inference_user_name is match('^[a-z0-9-]+$')
+    fail_msg: "Invalid inference_user_name '{{ inference_user_name }}'. It must contain only lowercase letters, digits, and hyphens."
+    success_msg: "Valid inference_user_name: {{ inference_user_name }}"
+
+- name: Create inference user
+  ansible.builtin.user:
+    name: "{{ inference_user_name }}"
+    comment: "Inference services user - {{ inference_user_name }}"
+    shell: /bin/bash
+    create_home: true
+    home: "/home/{{ inference_user_name }}"
+    state: present
+
+- name: Ensure inference user home directory has correct ownership and permissions
+  ansible.builtin.file:
+    path: "/home/{{ inference_user_name }}"
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0750'
+    state: directory
+
+- name: Create .ansible/tmp directory for inference user
+  ansible.builtin.file:
+    path: "/home/{{ inference_user_name }}/.ansible/tmp"
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0700'
+    state: directory
+
+# All services run as systemd user units: the inference user needs no sudo.
+- name: Remove the obsolete scoped sudoers rule
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ inference_user_name }}"
+    state: absent
+
+- name: Check if systemd linger is already enabled for inference user
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ inference_user_name }}"
+  register: inference_user_linger_stat
+
+- name: Enable systemd lingering for inference user
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ inference_user_name }}"
+  when: not inference_user_linger_stat.stat.exists
+  changed_when: not inference_user_linger_stat.stat.exists
+
+- name: Configure .bashrc for inference user
+  ansible.builtin.blockinfile:
+    path: "/home/{{ inference_user_name }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - Inference Environment"
+    block: |
+      # D-Bus and XDG Runtime configuration for systemd user services
+      export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+      if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+      fi
+
+      # Point Docker tools to Podman Rootless socket
+      export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+
+      export PATH="$HOME/.local/bin:$PATH"
+    create: true
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0644'
+
+- name: Configure .bash_profile to source .bashrc for login shells
+  ansible.builtin.copy:
+    dest: "/home/{{ inference_user_name }}/.bash_profile"
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0644'
+    content: |
+      if [ -f ~/.bashrc ]; then
+        . ~/.bashrc
+      fi
+
+- name: Create .ssh directory for inference user
+  ansible.builtin.file:
+    path: "/home/{{ inference_user_name }}/.ssh"
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0700'
+    state: directory
+
+- name: Check if admin authorized_keys exists
+  ansible.builtin.stat:
+    path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+  register: inference_user_admin_keys_stat
+
+- name: Copy authorized_keys from admin user to inference user
+  ansible.builtin.copy:
+    src: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+    dest: "/home/{{ inference_user_name }}/.ssh/authorized_keys"
+    remote_src: true
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0600'
+  when: inference_user_admin_keys_stat.stat.exists
+
+- name: Add custom SSH authorized keys
+  ansible.builtin.lineinfile:
+    path: "/home/{{ inference_user_name }}/.ssh/authorized_keys"
+    line: "{{ item }}"
+    create: true
+    owner: "{{ inference_user_name }}"
+    group: "{{ inference_user_name }}"
+    mode: '0600'
+  loop: "{{ inference_user_ssh_keys | default([]) }}"
+  when: inference_user_ssh_keys is defined and (inference_user_ssh_keys | length > 0)

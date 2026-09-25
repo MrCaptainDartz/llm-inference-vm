@@ -1,0 +1,26 @@
+---
+open_webui_user: "{{ inference_user | default('inference') }}"
+
+open_webui_image: "ghcr.io/open-webui/open-webui:main"
+open_webui_port: 8080
+
+# Point Open WebUI at the SGLang OpenAI-compatible API when the role is enabled.
+open_webui_connect_sglang: "{{ sglang_enabled | default(false) }}"
+
+# Point Open WebUI RAG embeddings at the SGLang embedding server when enabled.
+# The embedding container only exists when the sglang role itself runs.
+open_webui_connect_sglang_embedding: "{{ (sglang_enabled | default(false)) and (sglang_embedding_enabled | default(false)) }}"
+
+# Extra environment for the container (see https://docs.openwebui.com/getting-started/env-configuration).
+open_webui_env: {}
+# Keep signup open for the first admin login; close it from the admin panel afterwards.
+open_webui_enable_signup: true
+
+# Airgap: OFFLINE_MODE=true in the container (no outbound calls).
+open_webui_offline_mode: "{{ airgap_mode | default(false) }}"
+
+# Airgap: load the image from the bundle instead of pulling from the registry.
+open_webui_offline: "{{ airgap_mode | default(false) }}"
+
+# Bundle location on the VM (airgap only).
+open_webui_bundle_dir: "{{ llm_bundle_dir | default('/airgap-bundle') }}"

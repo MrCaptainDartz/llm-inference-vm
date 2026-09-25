@@ -1,0 +1,3 @@
+---
+# User running the rootless Podman socket (inference services account).
+podman_user: "{{ inference_user | default('inference') }}"

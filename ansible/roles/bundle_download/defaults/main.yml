@@ -1,0 +1,107 @@
+---
+# Builder: Ubuntu 26.04 amd64 with internet, same cloud image as the VM (apt closure must match).
+# Bundle lands in <repo>/airgap-bundle/ (gitignored); override bundle_download_dir if remote.
+
+bundle_download_dir: "{{ playbook_dir }}/../airgap-bundle"
+bundle_download_repo_dir: "{{ bundle_download_dir }}/repo"
+bundle_download_pool_dir: "{{ bundle_download_repo_dir }}/pool"
+bundle_download_images_dir: "{{ bundle_download_dir }}/images"
+bundle_download_models_dir: "{{ bundle_download_dir }}/models"
+bundle_download_docling_artifacts_dir: "{{ bundle_download_dir }}/docling-artifacts"
+bundle_download_cloud_image_dir: "{{ bundle_download_dir }}/cloudimg"
+
+# Cloud-Init image; preupload to the node when the hypervisor is airgapped (iac: cloud_image_preuploaded).
+bundle_download_cloud_image_url: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
+bundle_download_cloud_image_filename: "ubuntu-26.04-server-cloudimg-amd64.img"
+
+# Container images to ship; keep in sync with the service role defaults when pinning.
+bundle_download_images:
+  sglang: "docker.io/lmsysorg/sglang:v0.5.20-cu130"
+  docling: "{{ 'quay.io/docling-project/docling-serve-cu130:latest' if (docling_gpu | default(false)) else 'quay.io/docling-project/docling-serve:latest' }}"
+  open_webui: "ghcr.io/open-webui/open-webui:main"
+
+# HF models: repo id → dir under /models on the VM; mirrors the online sglang defaults.
+bundle_download_models:
+  - repo: "unsloth/Qwen3.8-27B-NVFP4"
+    dir: "qwen3.8-27b-nvfp4"
+  - repo: "maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal"
+    dir: "qwen3.8-27b-dflash2-draft"
+  - repo: "Qwen/Qwen3-Embedding-0.6B"
+    dir: "qwen3-embedding-0.6b"
+
+# Empty = ship every nvidia-headless-*-server-open; the target auto-detects its driver.
+bundle_download_nvidia_driver_packages: []
+
+# NVIDIA Container Toolkit apt repository (same as the nvidia role).
+bundle_download_nvidia_key_url: "https://nvidia.github.io/libnvidia-container/gpgkey"
+bundle_download_nvidia_keyring: "/etc/apt/keyrings/nvidia-container-toolkit.asc"
+bundle_download_nvidia_repo: "deb [signed-by={{ bundle_download_nvidia_keyring }}] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /"
+
+# Everything the airgap playbook installs, resolved at build time; mirrors the
+# online roles (no unattended-upgrades: disabled in airgap) plus builder tools.
+bundle_download_apt_packages:
+  # Base VM (essential_packages)
+  - qemu-guest-agent
+  - vim
+  - nano
+  - git
+  - git-lfs
+  - ripgrep
+  - fd-find
+  - curl
+  - wget
+  - netcat-openbsd
+  - dnsutils
+  - iputils-ping
+  - traceroute
+  - tcpdump
+  - nmap
+  - socat
+  - btop
+  - htop
+  - iotop
+  - iftop
+  - sysstat
+  - procps
+  - nvtop
+  - strace
+  - lsof
+  - tmux
+  - tree
+  - jq
+  - unzip
+  - zstd
+  - rsync
+  - less
+  - file
+  - build-essential
+  - acl
+  - ufw
+  - systemd-timesyncd
+  # Security hardening
+  - fail2ban
+  - auditd
+  - audispd-plugins
+  - apparmor
+  - apparmor-utils
+  - libpam-pwquality
+  # NVIDIA host stack
+  - ubuntu-drivers-common
+  - pciutils
+  - nvidia-container-toolkit
+  # DKMS needs matching headers: ship linux-virtual kernel + headers together.
+  - linux-image-virtual
+  - linux-headers-virtual
+  # Podman rootless stack
+  - podman
+  - podman-docker
+  - podman-compose
+  - docker-compose-v2
+  - uidmap
+  - slirp4netns
+  - fuse-overlayfs
+  - dbus-user-session
+  - ca-certificates
+  # Builder-only tools (also installed on the builder itself)
+  - skopeo
+  - dpkg-dev

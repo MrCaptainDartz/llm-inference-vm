@@ -1,0 +1,61 @@
+---
+# Copy to 'all.yml' (gitignored — may hold environment-specific or sensitive values) and fill in your values.
+
+# --- Inference services account (non-admin): rootless Podman + LLM/RAG services. ---
+inference_user: "inference"
+
+# Extra SSH public keys for the inference user (admin keys are always copied too)
+inference_ssh_keys: []
+#   - "ssh-ed25519 AAAAC3... deploy-key"
+
+# --- SSH hardening (security_hardening role) ---
+# TCP forwarding through SSH (leave false unless you need tunnels)
+ssh_allow_tcp_forwarding: false
+
+# Add the playbook host's IP (and any bastion) so fail2ban never bans the machine running the playbooks.
+security_hardening_fail2ban_ignoreip: "127.0.0.1/8 ::1"
+
+# --- System (base OS) ---
+system_timezone_value: "Europe/Paris"
+essential_packages_extra: []
+#   - pciutils            # useful to inspect a passthrough GPU (lspci)
+
+# Reboot at the end of the play when a kernel update is pending
+system_reboot_on_kernel_update: true
+
+# --- LLM services (rootless Podman, Quadlet-managed, user "inference") ---
+# All run as systemd user units on the shared Podman network "llm".
+
+# NVIDIA headless driver, container toolkit and CDI spec for rootless Podman GPU access.
+# Pin the driver instead of auto-detection: nvidia_driver_package: "nvidia-headless-580-server-open"
+nvidia_enabled: false
+
+# SGLang inference engine (OpenAI API :30000 on the LAN); requires nvidia_enabled.
+# Model paths default to HF repos online and /models/<bundle dir> in airgap mode.
+sglang_enabled: false
+# Role defaults carry the RTX PRO 5000 48 GB profile; override below to change it.
+sglang_served_model_name: "qwen3.8-27b"
+# sglang_model_path: "unsloth/Qwen3.8-27B-NVFP4"
+# sglang_draft_model_path: "maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal"
+# sglang_extra_args: []              # override the profile from the role
+# sglang_api_key: "change-me"        # bearer token for :30000 (tools pass it as OPENAI_API_KEY)
+
+# RAG embeddings: second SGLang container on the same GPU (debug 127.0.0.1:30001).
+sglang_embedding_enabled: true
+
+# Docling (RAG parsing); the GPU (-cu130) image shares the CDI devices with SGLang.
+# docling_gpu: true drops the SGLang static pool to 0.78 automatically (needs ~5 GB free VRAM).
+docling_enabled: true
+docling_gpu: false
+
+# Open WebUI (chat + RAG, port 8080 exposed to the LAN; auto-connects to SGLang and Docling when enabled).
+open_webui_enabled: true
+
+# --- Airgap deployment ---
+# 1. Build on the bundle_builder (Ubuntu 26.04 amd64, fresh cloud image instance): playbook-download.yml
+# 2. Transfer airgap-bundle/ to the VM at llm_bundle_dir (rsync/scp).
+# 3. Set airgap_mode: true and run playbook.yml.
+# Model paths, unattended-upgrades and OFFLINE_MODE/HF_HUB_OFFLINE follow airgap_mode automatically.
+# Also set in iac/terraform.tfvars: enable_cloudinit_snippet = false, cloud_image_preuploaded = true.
+# airgap_mode: true
+# llm_bundle_dir: /airgap-bundle

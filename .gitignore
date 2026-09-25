@@ -1,0 +1,45 @@
+.terraform/
+
+*.tfstate
+*.tfstate.*
+
+crash.log
+crash.*.log
+
+# .tfvars files may contain secrets and change per environment - do not commit
+*.tfvars
+*.tfvars.json
+
+# Override files are local-only and not checked in
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+.terraform.tfstate.lock.info
+
+.terraformrc
+terraform.rc
+
+.terraform.lock.hcl
+
+# Ansible — environment-specific files
+ansible/inventory/inventory.yml
+ansible/group_vars/all.yml
+
+# Ansible — possible secrets
+ansible/*.key
+ansible/*.token
+ansible/*.pem
+ansible/files/*.key
+ansible/files/*.pub
+ansible/files/*.token
+ansible/files/*.pem
+ansible/output/
+
+__pycache__/
+*.pyc
+
+# Airgap bundle (built by playbook-download.yml, tens of GB)
+airgap-bundle/*
+!airgap-bundle/.gitkeep

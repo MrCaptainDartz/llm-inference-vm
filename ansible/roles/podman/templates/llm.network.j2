@@ -1,0 +1,5 @@
+[Unit]
+Description=Shared Podman network for the LLM services
+
+[Network]
+# Containers reach each other by name; nothing hits the host without PublishPort.

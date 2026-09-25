@@ -1,0 +1,50 @@
+[Unit]
+Description=Open WebUI chat interface
+After=llm-network.service
+
+[Container]
+ContainerName=open-webui
+Image={{ open_webui_image }}
+Network=llm.network
+Volume=%h/open-webui/data:/app/backend/data
+PublishPort={{ open_webui_port }}:{{ open_webui_port }}
+# Trust X-Forwarded-* headers from the internal reverse proxy (TLS, client IPs).
+Environment=FORWARDED_ALLOW_IPS=*
+# RAG: document extraction delegated to docling-serve over the Podman network.
+Environment=CONTENT_EXTRACTION_ENGINE=docling
+Environment=DOCLING_SERVER_URL=http://docling:{{ docling_port | default(5001) }}
+# Session JWT signing key; generated once by Ansible, persistent across restarts.
+Environment=WEBUI_SECRET_KEY={{ open_webui_secret.stdout }}
+# First user to sign up becomes admin; flip to false in the admin panel afterwards.
+Environment=ENABLE_SIGNUP={{ 'true' if (open_webui_enable_signup | default(true)) else 'false' }}
+{% if open_webui_connect_sglang | default(false) %}
+# Chat backend: SGLang exposes an OpenAI-compatible API on the same network.
+Environment=OPENAI_API_BASE_URL=http://sglang:{{ sglang_port | default(30000) }}/v1
+# Open WebUI requires a non-empty key even when SGLang runs without --api-key.
+Environment=OPENAI_API_KEY={% if sglang_api_key | default('') | length > 0 %}{{ sglang_api_key }}{% else %}sglang{% endif %}
+Environment=ENABLE_OPENAI_API=true
+{% else %}
+# No local inference engine configured yet.
+Environment=ENABLE_OPENAI_API=false
+{% endif %}
+{% if open_webui_connect_sglang_embedding | default(false) %}
+# RAG_* are ConfigVars: the database wins on an already-provisioned WebUI.
+Environment=RAG_EMBEDDING_ENGINE=openai
+Environment=RAG_EMBEDDING_MODEL={{ sglang_embedding_served_model_name | default('qwen3-embedding-0.6b') }}
+Environment=RAG_OPENAI_API_BASE_URL=http://sglang-embedding:{{ sglang_embedding_port | default(30001) }}/v1
+Environment=RAG_OPENAI_API_KEY=sglang
+{% endif %}
+# Airgap: forbids any outbound call (version check, Hugging Face) inside Open WebUI.
+{% if open_webui_offline_mode | default(false) %}
+Environment=OFFLINE_MODE=true
+{% endif %}
+Environment=ENABLE_OLLAMA_API=false
+{% for key, value in open_webui_env.items() %}
+Environment={{ key }}={{ value }}
+{% endfor %}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

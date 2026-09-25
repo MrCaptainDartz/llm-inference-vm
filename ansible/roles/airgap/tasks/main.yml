@@ -1,0 +1,52 @@
+---
+# Switches apt to the bundle's local repository: no network source remains.
+
+- name: Assert the bundle repository is present
+  ansible.builtin.stat:
+    path: "{{ airgap_bundle_dir }}/repo/Packages.gz"
+  register: airgap_repo_stat
+
+- name: Fail with transfer instructions when the bundle is missing
+  ansible.builtin.assert:
+    that:
+      - airgap_repo_stat.stat.exists
+    fail_msg: >-
+      {{ airgap_bundle_dir }}/repo/Packages.gz not found. Build the bundle on an
+      internet-connected Ubuntu 26.04 host (ansible-playbook playbook-download.yml)
+      and transfer it to {{ airgap_bundle_dir }} before running this playbook.
+
+- name: Find the network apt sources
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - '*.list'
+      - '*.sources'
+    excludes: 99-llm-bundle.list
+  register: airgap_net_sources
+
+- name: Disable the network apt sources
+  ansible.builtin.command:
+    cmd: "mv {{ item.path }} {{ item.path }}.disabled"
+  loop: "{{ airgap_net_sources.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: true
+
+- name: Disable the legacy network sources file
+  ansible.builtin.command:
+    cmd: mv /etc/apt/sources.list /etc/apt/sources.list.disabled
+    removes: /etc/apt/sources.list
+
+- name: Point apt at the bundle repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/99-llm-bundle.list
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Ansible managed: offline repository shipped in the airgap bundle
+      deb [trusted=yes] file://{{ airgap_bundle_dir }}/repo ./
+
+- name: Refresh apt from the bundle repository only
+  ansible.builtin.apt:
+    update_cache: true

@@ -1,0 +1,91 @@
+---
+# Deploys Open WebUI, wired to Docling (extraction) and SGLang (chat/embeddings).
+
+- name: Create the Quadlet directory for the inference user
+  ansible.builtin.file:
+    path: "/home/{{ open_webui_user }}/.config/containers/systemd"
+    state: directory
+    owner: "{{ open_webui_user }}"
+    group: "{{ open_webui_user }}"
+    mode: '0755'
+
+- name: Create the Open WebUI data directory
+  ansible.builtin.file:
+    path: "/home/{{ open_webui_user }}/open-webui/data"
+    state: directory
+    owner: "{{ open_webui_user }}"
+    group: "{{ open_webui_user }}"
+    mode: '0755'
+
+# WEBUI_SECRET_KEY signs session JWTs; a stable key keeps sessions across restarts.
+- name: Ensure the WebUI session secret key exists
+  ansible.builtin.shell: |
+    set -e
+    umask 077
+    key_file=/home/{{ open_webui_user }}/open-webui/secret_key
+    if [ ! -s "$key_file" ]; then
+      openssl rand -hex 32 > "$key_file"
+      chown {{ open_webui_user }}:{{ open_webui_user }} "$key_file"
+    fi
+    cat "$key_file"
+  register: open_webui_secret
+  changed_when: false
+  no_log: true
+
+- name: Deploy the Open WebUI Quadlet
+  ansible.builtin.template:
+    src: open-webui.container.j2
+    dest: "/home/{{ open_webui_user }}/.config/containers/systemd/open-webui.container"
+    owner: "{{ open_webui_user }}"
+    group: "{{ open_webui_user }}"
+    mode: '0600'
+
+- name: Allow Open WebUI port through the firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ open_webui_port | string }}"
+    proto: tcp
+    comment: Open WebUI
+
+- name: Get inference user UID
+  ansible.builtin.command:
+    cmd: "id -u {{ open_webui_user }}"
+  register: open_webui_uid_result
+  changed_when: false
+
+- name: Check if the Open WebUI image is already loaded (airgap)
+  ansible.builtin.command:
+    cmd: "podman image exists {{ open_webui_image }}"
+  register: open_webui_image_loaded
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: "{{ open_webui_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ open_webui_uid_result.stdout }}"
+  when: open_webui_offline | default(false)
+
+- name: Load the Open WebUI image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "podman load -i {{ open_webui_bundle_dir }}/images/open_webui.tar"
+  become: true
+  become_user: "{{ open_webui_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ open_webui_uid_result.stdout }}"
+  changed_when: true
+  when:
+    - open_webui_offline | default(false)
+    - open_webui_image_loaded.rc != 0
+
+- name: Reload user systemd and restart Open WebUI
+  ansible.builtin.systemd_service:
+    name: open-webui.service
+    scope: user
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  become: true
+  become_user: "{{ open_webui_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ open_webui_uid_result.stdout }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ open_webui_uid_result.stdout }}/bus"

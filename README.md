@@ -89,6 +89,7 @@ ansible/
   roles/
     airgap                            # apt local du bundle
     lxc_base                          # socle LXC, SSH key-only, timezone
+    lxc_security                      # fail2ban temporaire
     developer_config
     inference_user                    # user non-admin
     lxc_docker                        # Docker + toolkit NVIDIA + smoke test

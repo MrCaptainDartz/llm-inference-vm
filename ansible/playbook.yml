@@ -6,6 +6,7 @@
     - role: airgap
       when: airgap_mode | default(false)
     - lxc_base
+    - lxc_security
     - developer_config
     - inference_user
     - lxc_docker

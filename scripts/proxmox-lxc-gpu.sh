@@ -101,7 +101,7 @@ pct stop "$CTID" >/dev/null 2>&1 || true
 echo "==> Enabling Docker-in-LXC features"
 pct set "$CTID" --features nesting=1,keyctl=1,fuse=1,mknod=1
 
-# NVIDIA device majors. 195 = nvidia0/nvidiactl/modeset, 509 = uvm, 511 = caps.
+# NVIDIA device majors: 195 = nvidia0/nvidiactl/modeset, 509 = uvm (dynamic).
 declare -A MAJORS=()
 for dev in /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
   if [[ -e "$dev" ]]; then
@@ -109,17 +109,8 @@ for dev in /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
     MAJORS["$major"]=1
   fi
 done
-# /dev/nvidia-caps is a directory on recent drivers. stat -c %t on the
-# directory returns 0, so iterate over the actual caps char devices instead.
-if [[ -d /dev/nvidia-caps ]]; then
-  for dev in /dev/nvidia-caps/nvidia-cap*; do
-    [[ -e "$dev" ]] || continue
-    major=$(device_major "$dev")
-    MAJORS["$major"]=1
-  done
-  # Some kernels expose the caps major even if the nodes are created lazily.
-  [[ ${#MAJORS[@]} -gt 0 ]] && MAJORS[511]=1
-fi
+# nvidia-caps (MIG capability nodes) is intentionally not passed: this stack
+# does not use MIG. Add its actual major manually if you enable MIG later.
 
 if [[ ${#MAJORS[@]} -eq 0 ]]; then
   echo "ERROR: no NVIDIA device found on the host; is the driver loaded?" >&2

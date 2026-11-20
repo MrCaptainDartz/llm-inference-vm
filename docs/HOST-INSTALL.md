@@ -119,7 +119,10 @@ Le script :
 - arrête le LXC ;
 - active `nesting=1,keyctl=1,fuse=1,mknod=1` ;
 - détecte les majors NVIDIA réels (`/dev/nvidia0`, `/dev/nvidia-uvm`, …) et
-  ajoute les règles `lxc.cgroup2.devices.allow` ;
+  ajoute les règles `lxc.cgroup2.devices.allow` ; en pratique **195**
+  (`nvidia0/ctl/modeset`) et **509** (`nvidia-uvm`) suffisent. Les majors
+  `234`/`511` sont les nodes `nvidia-caps` réservés à MIG : inutiles ici, à
+  ajouter manuellement seulement si tu actives MIG ;
 - ajoute le hook `lxc.hook.pre-start` (`nvidia_uvm`), le hook
   `lxc.hook.mount` (`/usr/share/lxc/hooks/nvidia`), les variables
   `NVIDIA_VISIBLE_DEVICES=all` / `NVIDIA_DRIVER_CAPABILITIES=compute,utility` ;
@@ -296,7 +299,8 @@ Points de vigilance :
 
 - LXC non privilégié, `nesting/keyctl/fuse/mknod` pour Docker, hook NVIDIA.
 - Les devices NVIDIA sont en `0666` (défaut du driver) ; l'autorisation réelle
-  est le cgroup `lxc.cgroup2.devices.allow` (majors 195/509).
+  est le cgroup `lxc.cgroup2.devices.allow` (majors 195/509 ; `nvidia-caps`
+  MIG non nécessaire).
 - Pas de `/dev/dri` : inutile pour CUDA, et impossible à utiliser proprement
   dans un LXC non privilégié sans mapping des GID `video`/`render`.
 - `nvidia-container-cli` tourne avec `--no-cgroups` : le cgroup est géré par le
@@ -308,7 +312,18 @@ Points de vigilance :
 
 Les anciens rôles `firewall` et `security_hardening` ne sont pas réappliqués :
 leur sysctl `net.ipv4.ip_forward=0` casse Docker, et UFW ne filtre pas les
-ports publiés par Docker. La frontière réseau est donc le firewall Proxmox
-(voir ci-dessus) ; le LXC garde SSH key-only, et les conteneurs ont
-`no-new-privileges` + `pids_limit`. Ajouter fail2ban/auditd est possible mais
-n'est pas inclus dans le bundle airgap.
+ports publiés par Docker. La frontière réseau reste le firewall Proxmox
+(voir ci-dessus). Le rôle `lxc_security` ajoute :
+
+- **fail2ban** avec des bans **temporaires** (`bantime = 1h`,
+  `bantime.increment = false`, donc jamais de ban définitif) ;
+- une liste `lxc_security_fail2ban_ignore_cidrs` dans
+  `ansible/group_vars/all.yml` pour exclure un réseau/site du ban
+  (ex. `["192.0.2.0/24"]`) ;
+`auditd` n'est **pas** inclus dans le LXC : dans un LXC non privilégié, le
+noyau refuse `set-pid`/`set-enable` (l'audit n'est pas namespacé), même avec
+`cap_audit_control` visible. Pour auditd, il faut le faire tourner sur l'hôte
+Proxmox (kernel `audit=1`) ou dans une VM privilégiée.
+
+Le LXC garde SSH key-only, et les conteneurs ont `no-new-privileges` +
+`pids_limit`.

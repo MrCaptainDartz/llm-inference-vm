@@ -8,6 +8,13 @@ ssh_allow_tcp_forwarding: false
 # --- System ---
 system_timezone_value: "Europe/Paris"
 
+# --- LXC security (fail2ban) ---
+# CIDRs that must never be banned by fail2ban.
+# lxc_security_fail2ban_ignore_cidrs: ["192.0.2.0/24"]
+lxc_security_fail2ban_ignore_cidrs: []
+# Temporary bans only; bantime.increment is disabled in the jail.
+lxc_security_fail2ban_bantime: "1h"
+
 # --- LiteLLM proxy (master key, no database) ---
 # Generate with: openssl rand -hex 32
 litellm_master_key: "CHANGE-ME-openssl-rand-hex-32"

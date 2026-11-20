@@ -316,7 +316,7 @@ APT_PACKAGES=(
   openssh-server sudo python3 ca-certificates curl gnupg jq
   vim nano git htop rsync less unzip zstd acl
   iproute2 net-tools pciutils lsof tmux tree procps
-  docker.io docker-compose-v2
+  docker.io docker-compose-v2 fail2ban
 )
 
 build_apt_repo() {

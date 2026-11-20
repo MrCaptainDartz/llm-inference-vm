@@ -1,0 +1,14 @@
+# Ansible managed: temporary bans only.
+[DEFAULT]
+bantime = {{ lxc_security_fail2ban_bantime }}
+findtime = {{ lxc_security_fail2ban_findtime }}
+maxretry = {{ lxc_security_fail2ban_maxretry }}
+ignoreip = {{ (lxc_security_fail2ban_ignore_ip + lxc_security_fail2ban_ignore_cidrs) | join(' ') }}
+# Do not escalate bans forever.
+bantime.increment = false
+backend = systemd
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd

@@ -278,7 +278,7 @@ tu vises un très gros volume ou plusieurs instances ; il ajoute un service et
 n'est pas maintenu au cœur par Open WebUI. Pour ce site unique, PGVector est
 le choix retenu.
 
-## Profil GPU cible : GPU 48 Go
+## Profil GPU cible : 48 Go
 
 - modèle `unsloth/Qwen3.8-27B-NVFP4` (corps NVFP4, lm_head FP8) ;
 - drafter `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal`

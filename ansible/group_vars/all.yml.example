@@ -2,6 +2,7 @@
 # Copy to all.yml (gitignored) and fill in the values.
 
 inference_user: "inference"
+inference_ssh_keys: []
 ssh_allow_tcp_forwarding: false
 
 system_timezone_value: "Europe/Paris"

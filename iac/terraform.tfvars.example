@@ -29,6 +29,8 @@ dns_servers      = ["192.0.2.1"]
 # start_on_boot = true
 
 # Optional template checksum (recommended).
+# ubuntu_lxc_template_checksum = "<sha256>"
+# ubuntu_lxc_template_checksum_algorithm = "sha256"
 
 # Airgap: copy host/ubuntu-26.04-standard_...tar.zst to /var/lib/vz/template/cache/.
 # ubuntu_lxc_template_preuploaded = true

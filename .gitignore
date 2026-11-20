@@ -2,6 +2,7 @@
 
 *.tfstate
 *.tfstate.*
+*.tfplan
 
 crash.log
 crash.*.log
@@ -34,6 +35,8 @@ terraform.rc
 # Environment-specific.
 ansible/inventory/inventory.yml
 ansible/group_vars/all.yml
+*.retry
+ansible/*.log
 
 __pycache__/
 *.pyc
@@ -45,3 +48,5 @@ airgap-bundle/*
 # Local secrets and backups.
 deploy/openwebui/.env
 deploy/openwebui/*.sql
+deploy/openwebui/initdb/*.sql
+!deploy/openwebui/initdb/01-vector.sql

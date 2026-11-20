@@ -7,3 +7,4 @@
       ansible.builtin.command:
         cmd: "{{ playbook_dir }}/../scripts/fetch-airgap-bundle.sh --output {{ playbook_dir }}/../airgap-bundle"
         chdir: "{{ playbook_dir }}/.."
+      changed_when: true

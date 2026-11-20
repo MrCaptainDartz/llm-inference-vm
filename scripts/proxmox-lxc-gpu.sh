@@ -132,7 +132,7 @@ if [[ -n "$BUNDLE" ]]; then
   existing_mp=$(grep -E '^mp[0-9]+:' "$CONF" | head -1 || true)
   if grep -Fq "mp=/airgap-bundle" "$CONF"; then
     if ! grep -Eq "mp=/airgap-bundle,.*backup=0" "$CONF"; then
-      sed -i '/mp=.*mp=\/airgap-bundle/ s/$/,backup=0/' "$CONF"
+      sed -i '/mp=\/airgap-bundle/ s/$/,backup=0/' "$CONF"
       echo "==> Added backup=0 to the existing bundle mount"
     fi
     echo "==> Bundle mount already present"

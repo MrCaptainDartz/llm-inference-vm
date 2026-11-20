@@ -143,6 +143,7 @@
     cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml stop vllm"
   register: inference_stack_stop_vllm
   changed_when: "'Stopped' in inference_stack_stop_vllm.stdout"
+  failed_when: false
   when: not (vllm_start | bool)
 
 - name: Stop vLLM embedding when the service is deployed but vLLM is disabled
@@ -150,6 +151,7 @@
     cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml stop vllm-embedding"
   register: inference_stack_stop_vllm_embedding
   changed_when: "'Stopped' in inference_stack_stop_vllm_embedding.stdout"
+  failed_when: false
   when:
     - vllm_embedding_enabled | bool
     - not (vllm_start | bool)
@@ -170,6 +172,32 @@
     ('Started' in inference_stack_up.stdout) or
     ('Recreated' in inference_stack_up.stdout) or
     ('Created' in inference_stack_up.stdout)
+
+- name: Wait for vLLM to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:8000/v1/models"
+    status_code: 200
+    timeout: 5
+  register: inference_stack_vllm_health
+  until: inference_stack_vllm_health.status | default(0) == 200
+  retries: 120
+  delay: 5
+  changed_when: false
+  when: vllm_start | bool
+
+- name: Wait for the embedding service to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ vllm_embedding_port }}/v1/models"
+    status_code: 200
+    timeout: 5
+  register: inference_stack_embedding_health
+  until: inference_stack_embedding_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+  when:
+    - vllm_start | bool
+    - vllm_embedding_enabled | bool
 
 - name: Wait for the LiteLLM port
   ansible.builtin.wait_for:

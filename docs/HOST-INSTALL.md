@@ -63,7 +63,7 @@ ls -l /dev/nvidia0 /dev/nvidia-uvm
 
 > Le script prend par défaut le **dernier driver stable** de la branche 595
 > (`https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt`, actuellement
-> 595.112.07). La version `595.104.02` est celle validée sur `pve-node1`
+> 595.112.07). La version `595.104.02` est celle validée sur l'hôte de test
 > (PVE 9.2.27, kernel 7.0). Si besoin, pin :
 > `NVIDIA_DRIVER_VERSION=595.104.02 ./scripts/fetch-airgap-bundle.sh`.
 
@@ -164,10 +164,8 @@ Renseigner au minimum :
 ```yaml
 litellm_master_key: "<openssl rand -hex 32>"
 docling_api_key: "<openssl rand -hex 32>"
-litellm_base_url: "http://<ip-lxc>:4000/v1"
-docling_url: "http://<ip-lxc>:5001"
 
-# pve-node1 (GPU 8 Go) :
+# Hôte de test (GPU 8 Go) :
 vllm_start: false
 docling_gpu: false
 
@@ -200,7 +198,7 @@ Le rôle `inference_stack` :
   détecte CUDA automatiquement ; il n'y a pas de `DOCLING_DEVICE` à forcer) ;
 - expose LiteLLM `:4000` et Docling `:5001` au LAN ; vLLM reste sur
   `127.0.0.1:8000` / réseau Docker interne ;
-- attend la santé de LiteLLM et de Docling (API key).
+- attend la santé de vLLM (si démarré), LiteLLM et Docling (API key).
 
 Le Docling contient **les deux moteurs OCR** :
 - **Tesseract** (`fra`/`fr`) : CPU, 0 VRAM, rapide ;

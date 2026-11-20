@@ -108,7 +108,7 @@ on PDFs that already have a text layer, add `"force_ocr":true`.
 
 `"table_mode":"accurate"` selects **TableFormer accurate**, which Docling
 supports on **CPU, CUDA and XPU** (not MPS). It is **not GPU-only**: on the
-CPU-only pve-node1 test, a 2-page PDF with a 5-column/7-row table was converted in
+CPU-only test host, a 2-page PDF with a 5-column/7-row table was converted in
 **~2.75 s** (4.0 s including the HTTP round trip) and both tables were emitted
 correctly in Markdown. On the 48 GB target it runs on GPU and is faster. Both
 `table_mode` and `do_table_structure` are Docling defaults; they are set
@@ -191,7 +191,7 @@ the exact compose and `.env` from this directory, then removed:
 - Open WebUI's Docling loader extracted a 10-page PDF through Docling with
   `ocr_preset=tesseract`, `ocr_lang=["fr"]`, `table_mode=accurate` and
   `do_table_structure=true`.
-- Full chat/RAG was **not** tested on pve-node1 because vLLM is not started there;
+- Full chat/RAG was **not** tested on the test host because vLLM is not started there;
   that must be validated on the 48 GB target.
 
 ## Validation

@@ -71,13 +71,11 @@ $EDITOR group_vars/all.yml
 ```yaml
 litellm_master_key: "<openssl rand -hex 32>"
 docling_api_key: "<openssl rand -hex 32>"
-litellm_base_url: "http://192.0.2.10:4000/v1"
-docling_url: "http://192.0.2.10:5001"
 
 # Serveur 48 Go :
 vllm_start: true
 docling_gpu: true
-# pve-node1 (GPU 8 Go) :
+# Hôte de test (GPU 8 Go) :
 # vllm_start: false
 # docling_gpu: false
 
@@ -100,10 +98,10 @@ ssh-keyscan -H 192.0.2.10 >> ~/.ssh/known_hosts
 
 Le play LXC installe Docker + toolkit NVIDIA, charge le compose vLLM +
 embedding + LiteLLM + Docling, télécharge `fra`/`fr` Tesseract, et attend la
-santé de LiteLLM et Docling.
+santé de vLLM (si démarré), LiteLLM et Docling.
 
-Sur `pve-node1` (GPU 8 Go), `vllm_start: false` + `docling_gpu: false` : LiteLLM et
-Docling CPU tournent ; vLLM n'est pas chargé.
+Sur l'hôte de test (GPU 8 Go), `vllm_start: false` + `docling_gpu: false` :
+LiteLLM et Docling CPU tournent ; vLLM n'est pas chargé.
 
 ## 4. Déployer Open WebUI + PGVector sur ta VM Docker
 

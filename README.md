@@ -55,8 +55,11 @@ Ports LAN : `8080` (Open WebUI), `4000` (LiteLLM), `5001` (Docling).
 
 ## Prérequis
 
-- **Proxmox VE 9.2+**, `lxc-pve >= 6.0.5` (le host de test `pve-node1` est en 9.2.27
-  avec `lxc-pve 7.0.0`).
+Les exemples utilisent des valeurs fictives (`192.0.2.0/24`, `vmbr0`,
+`pve-node1`, `llm-lxc`) ; les valeurs réelles restent dans les fichiers
+gitignorés (`terraform.tfvars`, `inventory.yml`, `group_vars/all.yml`).
+
+- **Proxmox VE 9.2+**, `lxc-pve >= 6.0.5`.
 - Driver NVIDIA + `nvidia-container-toolkit` sur l'hôte
   ([docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
 - Dépôts Debian/PVE locaux (`main contrib non-free non-free-firmware`) sur le
@@ -116,7 +119,7 @@ docs/
 ### 1. Préparer l'hôte Proxmox
 
 Suivre [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md) : driver NVIDIA, toolkit,
-template LXC. Le host `pve-node1` est déjà préparé.
+template LXC. L'hôte Proxmox est déjà préparé.
 
 ### 2. Créer le LXC
 
@@ -171,8 +174,8 @@ docker compose config --quiet
 docker compose up -d
 ```
 
-Le `.env` reprend `litellm_master_key`, `docling_api_key`,
-`litellm_base_url`, `docling_url` du LXC. Le compose force
+Le `.env` reprend les clés et les URLs de LiteLLM/Docling
+(`LITELLM_BASE_URL`, `DOCLING_SERVER_URL`). Le compose force
 `ENABLE_PERSISTENT_CONFIG=false` : `.env` est la source de vérité et les
 changements d'UI ne survivent pas au redémarrage. Détails :
 [deploy/openwebui/README.md](deploy/openwebui/README.md).
@@ -189,9 +192,9 @@ changements d'UI ne survivent pas au redémarrage. Détails :
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `vllm_start` | `true` | démarre vLLM chat + embedding ; **`false` sur pve-node1** (GPU 8 Go) |
+| `vllm_start` | `true` | démarre vLLM chat + embedding ; **`false` sur un GPU 8 Go** |
 | `vllm_embedding_enabled` | `true` | 2ᵉ vLLM pour les embeddings RAG |
-| `docling_gpu` | `true` (cible 48 Go) ; `false` dans les defaults du rôle / pve-node1 | image CUDA + layout/table sur GPU ; **`false` sur pve-node1** |
+| `docling_gpu` | `true` (cible 48 Go) ; `false` dans les defaults du rôle | image CUDA + layout/table sur GPU ; **`false` sur un GPU 8 Go** |
 | `docling_ocr_preset` | `tesseract` | moteur OCR côté Open WebUI (`DOCLING_PARAMS`) |
 | `docling_ocr_lang` | `["fr"]` | langues OCR BCP-47 |
 | `vllm_enforce_eager` | `false` | workaround si décode NVFP4/DFlash sm120 instable |
@@ -239,7 +242,7 @@ Les deux modèles sont locaux : le test offline ne télécharge rien.
 
 **Reconnaissance de tableaux** : `table_mode=accurate` sélectionne
 **TableFormer accurate**. Docling le supporte sur **CPU, CUDA et XPU** (pas
-MPS) : ce n'est donc **pas GPU-only**. Test sur le Docling CPU de pve-node1, PDF de
+MPS) : ce n'est donc **pas GPU-only**. Test sur le Docling CPU de test, PDF de
 2 pages avec un tableau 5 colonnes × 7 lignes : **~2,75 s** de traitement
 (4,0 s avec l'aller-retour HTTP), tableaux Markdown corrects. Sur le 48 Go il
 tourne sur GPU et va plus vite. `table_mode` et `do_table_structure` sont déjà
@@ -290,7 +293,7 @@ le choix retenu.
   d'environ **2,7-3,7 Go**, à mesurer au premier démarrage (les pics Docling
   peuvent la réduire).
 
-Le host `pve-node1` n'a qu'une **GPU 8 Go** : `vllm_start: false` et
+L'hôte de test n'a qu'un **GPU 8 Go** : `vllm_start: false` et
 `docling_gpu: false`. On y valide le LXC, Docker, le hook GPU (`nvidia-smi`),
 LiteLLM, Docling CPU (Tesseract + EasyOCR), et le compose Open WebUI/PGVector.
 Le 27B, DFlash2 et Docling CUDA se valident sur le serveur 48 Go.

@@ -14,8 +14,6 @@ lxc_security_fail2ban_bantime: "1h"
 litellm_master_key: "CHANGE-ME-openssl-rand-hex-32"
 litellm_port: 4000
 litellm_image: "ghcr.io/berriai/litellm:main-stable"
-# Open WebUI compose (existing Docker VM).
-litellm_base_url: "http://192.0.2.10:4000/v1"
 
 # vLLM chat; airgap_mode selects the bundle model paths.
 vllm_image: "vllm/vllm-openai:v0.34.0"
@@ -58,11 +56,11 @@ docling_enable_ui: false
 # Tesseract is fastest; easyocr handles noisy scans better.
 docling_ocr_preset: "tesseract"
 docling_ocr_lang: ["fr"]
-# Open WebUI compose (DOCLING_SERVER_URL).
-docling_url: "http://192.0.2.10:5001"
 
 # Smoke-test Docker/NVIDIA with nvidia-smi only.
 docker_gpu_smoke_test: true
 docker_gpu_smoke_image: "nvidia/cuda:13.0.0-base-ubuntu24.04"
 
-# Airgap: set airgap_mode: true and llm_bundle_dir: /airgap-bundle.
+# Airgap deployment.
+airgap_mode: false
+llm_bundle_dir: /airgap-bundle

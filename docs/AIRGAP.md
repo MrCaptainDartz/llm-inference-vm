@@ -152,13 +152,11 @@ llm_bundle_dir: /airgap-bundle
 
 litellm_master_key: "<openssl rand -hex 32>"
 docling_api_key: "<openssl rand -hex 32>"
-litellm_base_url: "http://192.0.2.10:4000/v1"
-docling_url: "http://192.0.2.10:5001"
 
 # Site 48 Go :
 docling_gpu: true
 vllm_start: true
-# pve-node1 (GPU 8 Go) : false / false
+# Hôte de test (GPU 8 Go) : false / false
 
 docling_ocr_preset: "tesseract"
 docling_ocr_lang: ["fr"]
@@ -267,7 +265,7 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
 - Le script prend par défaut le **dernier driver stable 595.x** via
   `https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt` (actuellement
   595.112.07). Si le kernel PVE n'est pas encore supporté par DKMS, épingler
-  `NVIDIA_DRIVER_VERSION=595.104.02` (validé sur pve-node1). Le driver 620.x de
+  `NVIDIA_DRIVER_VERSION=595.104.02` (validé sur l'hôte de test). Le driver 620.x de
   `us.download.nvidia.com` n'est pas utilisé par défaut.
 - Tesseract est le moteur OCR par défaut (CPU, 0 VRAM, le plus rapide).
   EasyOCR est disponible pour les scans inversés/bruités ; sur le site 48 Go,

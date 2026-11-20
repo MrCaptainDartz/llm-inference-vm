@@ -21,6 +21,9 @@ vllm_kv_cache_dtype: "nvfp4"
 vllm_attention_backend: "flash_attn"
 vllm_max_num_seqs: 4
 vllm_max_num_batched_tokens: 32768
+# Qwen3.8/DFlash2/Embedding are supported natively by the pinned vLLM.
+# Keep false; only enable for a model that really ships custom modeling code.
+vllm_trust_remote_code: false
 vllm_enforce_eager: false
 vllm_reasoning_parser: "qwen3"
 vllm_tool_call_parser: "qwen3_coder"
@@ -46,7 +49,6 @@ docling_image: "{{ 'quay.io/docling-project/docling-serve-cu130:v1.38.2' if (doc
 docling_port: 5001
 docling_api_key: "change-me"
 docling_enable_ui: false
-docling_num_threads: 8
 docling_tessdata_dir: "/srv/llm/docling/tessdata"
 docling_tessdata_url: "https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata"
 docling_offline: "{{ airgap_mode | default(false) }}"

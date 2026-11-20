@@ -15,6 +15,13 @@
       internet-connected Ubuntu 26.04 host (ansible-playbook playbook-download.yml)
       and transfer it to {{ airgap_bundle_dir }} before running this playbook.
 
+- name: Verify the bundle integrity manifest
+  ansible.builtin.command:
+    cmd: sha256sum -c SHA256SUMS --quiet
+    chdir: "{{ airgap_bundle_dir }}"
+  changed_when: false
+  when: airgap_verify_checksums | default(true)
+
 - name: Find the network apt sources
   ansible.builtin.find:
     paths: /etc/apt/sources.list.d

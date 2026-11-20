@@ -19,7 +19,7 @@ De zéro à une stack d'inférence LLM sur Proxmox, avec :
 - Airgap : un builder Ubuntu 26.04 amd64 avec internet.
 
 ```bash
-ansible-galaxy collection install community.general
+ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 ## 1. Créer le LXC
@@ -29,6 +29,9 @@ cd iac
 cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
 ```
+
+`proxmox_insecure` reste à `false` ; ne le passer à `true` que si l'API
+Proxmox utilise un certificat auto-signé.
 
 Renseigner : `proxmox_api_url`, `proxmox_api_token`, `ssh_public_key`,
 `vm_node_name`, `network_bridge`, `network_gateway`, `lxc_ipv4`.
@@ -88,6 +91,13 @@ Airgap : ajouter `airgap_mode: true` et `llm_bundle_dir: /airgap-bundle`.
 ansible-playbook playbook.yml
 ```
 
+Avant le premier run, ajoute la clé d'hôte du LXC à `known_hosts` (Ansible
+vérifie désormais les clés d'hôte) :
+
+```bash
+ssh-keyscan -H 192.0.2.10 >> ~/.ssh/known_hosts
+```
+
 Le play LXC installe Docker + toolkit NVIDIA, charge le compose vLLM +
 embedding + LiteLLM + Docling, télécharge `fra`/`fr` Tesseract, et attend la
 santé de LiteLLM et Docling.
@@ -100,6 +110,7 @@ Docling CPU tournent ; vLLM n'est pas chargé.
 ```bash
 cd ../deploy/openwebui
 cp .env.example .env
+chmod 600 .env
 $EDITOR .env
 docker compose config --quiet
 docker compose up -d

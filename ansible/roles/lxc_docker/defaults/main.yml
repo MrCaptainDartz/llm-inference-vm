@@ -9,6 +9,7 @@ lxc_docker_packages:
 lxc_docker_nvidia_toolkit_package: "nvidia-container-toolkit"
 lxc_docker_nvidia_key_url: "https://nvidia.github.io/libnvidia-container/gpgkey"
 lxc_docker_nvidia_keyring: "/etc/apt/keyrings/nvidia-container-toolkit.gpg"
+lxc_docker_nvidia_key_fingerprint: "C95B321B61E88C1809C4F759DDCAE044F796ECB0"
 lxc_docker_nvidia_repo_uri: "https://nvidia.github.io/libnvidia-container/stable/deb/amd64/"
 
 # The airgap role already switched apt to the local bundle repository.

@@ -22,6 +22,7 @@ override.tf.json
 terraform.rc
 
 .terraform.lock.hcl
+!iac/.terraform.lock.hcl
 
 # Ansible — environment-specific files
 ansible/inventory/inventory.yml
@@ -45,4 +46,5 @@ airgap-bundle/*
 !airgap-bundle/.gitkeep
 # Open WebUI compose (existing Docker VM) — local secrets
 deploy/openwebui/.env
+# Local pg_dump backups; initdb/01-vector.sql is intentionally tracked.
 deploy/openwebui/*.sql

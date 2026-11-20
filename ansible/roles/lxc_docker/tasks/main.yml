@@ -54,6 +54,20 @@
     mode: '0644'
   when: not (lxc_docker_offline | bool)
 
+- name: Verify the NVIDIA container toolkit signing key fingerprint
+  ansible.builtin.command:
+    cmd: "gpg --show-keys --with-colons {{ lxc_docker_nvidia_keyring }}"
+  register: lxc_docker_nvidia_key_info
+  changed_when: false
+  when: not (lxc_docker_offline | bool)
+
+- name: Assert the NVIDIA container toolkit key fingerprint
+  ansible.builtin.assert:
+    that:
+      - lxc_docker_nvidia_key_fingerprint in lxc_docker_nvidia_key_info.stdout
+    fail_msg: "NVIDIA container toolkit signing key fingerprint mismatch"
+  when: not (lxc_docker_offline | bool)
+
 - name: Add the NVIDIA container toolkit repository
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/nvidia-container-toolkit.sources
@@ -124,7 +138,8 @@
 - name: Load the CUDA smoke image from the bundle (airgap)
   ansible.builtin.command:
     cmd: "docker load -i {{ llm_bundle_dir | default('/airgap-bundle') }}/images/cuda-smoke.tar"
-  changed_when: false
+  register: lxc_docker_cuda_load
+  changed_when: "'Loaded image' in lxc_docker_cuda_load.stdout"
   when:
     - lxc_docker_offline | bool
     - lxc_docker_gpu_smoke_test | bool

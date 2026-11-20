@@ -109,10 +109,16 @@ for dev in /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
     MAJORS["$major"]=1
   fi
 done
-# /dev/nvidia-caps is only useful for MIG; add it when present.
-if [[ -e /dev/nvidia-caps ]]; then
-  major=$(device_major /dev/nvidia-caps)
-  MAJORS["$major"]=1
+# /dev/nvidia-caps is a directory on recent drivers. stat -c %t on the
+# directory returns 0, so iterate over the actual caps char devices instead.
+if [[ -d /dev/nvidia-caps ]]; then
+  for dev in /dev/nvidia-caps/nvidia-cap*; do
+    [[ -e "$dev" ]] || continue
+    major=$(device_major "$dev")
+    MAJORS["$major"]=1
+  done
+  # Some kernels expose the caps major even if the nodes are created lazily.
+  [[ ${#MAJORS[@]} -gt 0 ]] && MAJORS[511]=1
 fi
 
 if [[ ${#MAJORS[@]} -eq 0 ]]; then
@@ -126,7 +132,16 @@ for major in "${!MAJORS[@]}"; do
 done
 
 echo "==> Adding the NVIDIA LXC hook and environment"
-add_line "lxc.hook.pre-start: sh -c '[ ! -f /dev/nvidia0 ] && /usr/bin/nvidia-modprobe -c0 -u'"
+# Remove the old pre-start line, which exited 1 when /dev/nvidia0 already
+# existed and therefore made every LXC start fail. The replacement always
+# exits 0.
+OLD_PRE_START="lxc.hook.pre-start: sh -c '[ ! -f /dev/nvidia0 ] && /usr/bin/nvidia-modprobe -c0 -u'"
+if grep -Fqx -- "$OLD_PRE_START" "$CONF"; then
+  awk -v old="$OLD_PRE_START" '$0 != old' "$CONF" > "${CONF}.tmp"
+  cat "${CONF}.tmp" > "$CONF"
+  rm -f "${CONF}.tmp"
+fi
+add_line "lxc.hook.pre-start: sh -c 'if [ ! -f /dev/nvidia0 ]; then /usr/bin/nvidia-modprobe -c0 -u; fi'"
 add_line "lxc.environment: NVIDIA_VISIBLE_DEVICES=all"
 add_line "lxc.environment: NVIDIA_DRIVER_CAPABILITIES=compute,utility"
 add_line "lxc.hook.mount: /usr/share/lxc/hooks/nvidia"
@@ -142,6 +157,10 @@ if [[ -n "$BUNDLE" ]]; then
   fi
   existing_mp=$(grep -E '^mp[0-9]+:' "$CONF" | head -1 || true)
   if grep -Fq "mp=/airgap-bundle" "$CONF"; then
+    if ! grep -Eq "mp=/airgap-bundle,.*backup=0" "$CONF"; then
+      sed -i '/mp=.*mp=\/airgap-bundle/ s/$/,backup=0/' "$CONF"
+      echo "==> Added backup=0 to the existing bundle mount"
+    fi
     echo "==> Bundle mount already present"
   else
     if [[ -n "$existing_mp" ]]; then
@@ -149,8 +168,8 @@ if [[ -n "$BUNDLE" ]]; then
     else
       idx=0
     fi
-    add_line "mp${idx}: ${BUNDLE},mp=/airgap-bundle,ro=1"
-    echo "==> Mounted bundle at mp${idx} -> /airgap-bundle"
+    add_line "mp${idx}: ${BUNDLE},mp=/airgap-bundle,ro=1,backup=0"
+    echo "==> Mounted bundle at mp${idx} -> /airgap-bundle (backup=0)"
   fi
 fi
 

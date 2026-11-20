@@ -18,9 +18,6 @@ lxc_base_packages:
   - iproute2
   - net-tools
   - lsof
-  - tcpdump
-  - nmap
-  - socat
   - tmux
   - tree
   - procps

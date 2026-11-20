@@ -83,12 +83,12 @@ iac/                                  # OpenTofu — LXC uniquement
 ansible/
   playbook.yml                        # LXC : base, Docker, vLLM/LiteLLM/Docling
   playbook-download.yml               # wrapper du script airgap (builder)
+  requirements.yml                    # collection community.general
   inventory/inventory.yml.example
   group_vars/all.yml.example
   roles/
     airgap                            # apt local du bundle
-    system_timezone
-    lxc_base                          # socle LXC, SSH key-only
+    lxc_base                          # socle LXC, SSH key-only, timezone
     developer_config
     inference_user                    # user non-admin
     lxc_docker                        # Docker + toolkit NVIDIA + smoke test
@@ -164,6 +164,7 @@ embedding + LiteLLM + Docling.
 ```bash
 cd deploy/openwebui
 cp .env.example .env
+chmod 600 .env
 $EDITOR .env
 docker compose config --quiet
 docker compose up -d
@@ -189,7 +190,7 @@ changements d'UI ne survivent pas au redémarrage. Détails :
 |---|---|---|
 | `vllm_start` | `true` | démarre vLLM chat + embedding ; **`false` sur pve-node1** (GPU 8 Go) |
 | `vllm_embedding_enabled` | `true` | 2ᵉ vLLM pour les embeddings RAG |
-| `docling_gpu` | `true` (site 48 Go) | image CUDA + layout/table sur GPU ; **`false` sur pve-node1** |
+| `docling_gpu` | `true` (cible 48 Go) ; `false` dans les defaults du rôle / pve-node1 | image CUDA + layout/table sur GPU ; **`false` sur pve-node1** |
 | `docling_ocr_preset` | `tesseract` | moteur OCR côté Open WebUI (`DOCLING_PARAMS`) |
 | `docling_ocr_lang` | `["fr"]` | langues OCR BCP-47 |
 | `vllm_enforce_eager` | `false` | workaround si décode NVFP4/DFlash sm120 instable |
@@ -284,7 +285,9 @@ le choix retenu.
 - `--max-model-len 262144`, `--max-num-seqs 4`,
   `--max-num-batched-tokens 32768` ;
 - budget : chat `0.78 × 48 = 37.4 Go` (Docling GPU actif), embedding
-  `0.06 × 48 = 2.9 Go`, Docling layout/table ~4-5 Go, marge ~7.7 Go.
+  `0.06 × 48 = 2.9 Go`, Docling layout/table ~4-5 Go ; la marge résiduelle est
+  d'environ **2,7-3,7 Go**, à mesurer au premier démarrage (les pics Docling
+  peuvent la réduire).
 
 Le host `pve-node1` n'a qu'une **GPU 8 Go** : `vllm_start: false` et
 `docling_gpu: false`. On y valide le LXC, Docker, le hook GPU (`nvidia-smi`),
@@ -308,6 +311,7 @@ Il ne duplique pas les paquets Debian/PVE de l'hôte (`dkms`, `build-essential`,
 `proxmox-headers-$(uname -r)`) : ils viennent de tes dépôts locaux. Le driver
 stable 595.x (`download.nvidia.com`), le toolkit NVIDIA, le template LXC, les
 images, les modèles et la closure Ubuntu du LXC sont dans le bundle.
+Le bundle contient aussi `SHA256SUMS`, vérifié par le rôle `airgap`.
 
 ## Opérations
 

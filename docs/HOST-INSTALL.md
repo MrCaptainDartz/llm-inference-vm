@@ -91,6 +91,9 @@ Dans `iac/terraform.tfvars` (mode airgap) :
 ubuntu_lxc_template_preuploaded = true
 ```
 
+Garder `proxmox_insecure = false` ; le passer à `true` uniquement si l'API
+Proxmox a un certificat auto-signé.
+
 Puis, depuis le poste de pilotage :
 
 ```bash
@@ -173,8 +176,12 @@ docling_gpu: false
 Puis :
 
 ```bash
+ssh-keyscan -H <ip-lxc> >> ~/.ssh/known_hosts
 ansible-playbook playbook.yml
 ```
+
+Ansible vérifie les clés d'hôte (`host_key_checking = true`) ; sans l'entrée
+`known_hosts`, le premier run échoue volontairement.
 
 Le rôle `lxc_docker` installe Docker + `nvidia-container-toolkit`, configure le
 runtime Docker `nvidia` avec `no-cgroups=true`, charge l'image CUDA de smoke
@@ -186,7 +193,8 @@ Le rôle `inference_stack` :
   `/srv/llm/docling/tessdata/` (le preset Tesseract de Docling cherche `fr`) ;
 - déploie le compose vLLM + embedding + LiteLLM + **Docling** ;
 - avec `docling_gpu: false`, utilise l'image Docling CPU ; avec `true`,
-  l'image CUDA `docling-serve-cu130:v1.38.2` et `DOCLING_DEVICE=cuda` ;
+  l'image CUDA `docling-serve-cu130:v1.38.2` et le runtime `nvidia` (Docling
+  détecte CUDA automatiquement ; il n'y a pas de `DOCLING_DEVICE` à forcer) ;
 - expose LiteLLM `:4000` et Docling `:5001` au LAN ; vLLM reste sur
   `127.0.0.1:8000` / réseau Docker interne ;
 - attend la santé de LiteLLM et de Docling (API key).
@@ -208,6 +216,7 @@ Sur ta VM existante :
 ```bash
 cd deploy/openwebui
 cp .env.example .env
+chmod 600 .env
 $EDITOR .env
 docker compose config --quiet
 docker compose up -d
@@ -257,7 +266,8 @@ Le profil :
   (0.82 sinon), embedding `0.06` ;
 - Docling GPU layout/table ~4-5 GB, OCR Tesseract CPU 0 VRAM (EasyOCR ~1-2 GB
   s'il est sélectionné) ;
-- marge ~7.7 GB sur 48 Go.
+- marge résiduelle ~2,7-3,7 GB sur 48 Go, à mesurer au premier démarrage
+  (les pics Docling peuvent la réduire).
 
 Premier démarrage vLLM (chargement des poids) :
 
@@ -293,4 +303,12 @@ Points de vigilance :
   parent LXC, pas par le toolkit.
 - LiteLLM et Docling portent chacun une clé API ; vLLM n'est pas exposé.
 - Docling `DOCLING_SERVE_API_KEY` et LiteLLM `litellm_master_key` sont dans
-  `group_vars/all.yml` (gitignoré) et dans `/srv/llm/...` (0600 pour LiteLLM).
+  `group_vars/all.yml` (gitignoré) et dans `/srv/llm/...` (0600 pour LiteLLM et
+  pour le compose, qui contient aussi les clés).
+
+Les anciens rôles `firewall` et `security_hardening` ne sont pas réappliqués :
+leur sysctl `net.ipv4.ip_forward=0` casse Docker, et UFW ne filtre pas les
+ports publiés par Docker. La frontière réseau est donc le firewall Proxmox
+(voir ci-dessus) ; le LXC garde SSH key-only, et les conteneurs ont
+`no-new-privileges` + `pids_limit`. Ajouter fail2ban/auditd est possible mais
+n'est pas inclus dans le bundle airgap.

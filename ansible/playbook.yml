@@ -5,9 +5,6 @@
   roles:
     - role: airgap
       when: airgap_mode | default(false)
-    - role: system_timezone
-      vars:
-        system_timezone_manage_ntp: false
     - lxc_base
     - developer_config
     - inference_user

@@ -5,7 +5,7 @@
     that:
       - inference_user_name is defined
       - inference_user_name is string
-      - inference_user_name is match('^[a-z0-9-]+$')
+      - inference_user_name is match('^[a-z0-9][a-z0-9-]*$')
     fail_msg: "Invalid inference_user_name '{{ inference_user_name }}'. It must contain only lowercase letters, digits, and hyphens."
     success_msg: "Valid inference_user_name: {{ inference_user_name }}"
 

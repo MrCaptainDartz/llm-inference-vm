@@ -7,6 +7,9 @@ services:
     runtime: nvidia
     restart: unless-stopped
     ipc: host
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 4096
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       HF_HUB_OFFLINE: "{{ '1' if (vllm_offline | bool) else '0' }}"
@@ -31,7 +34,9 @@ services:
       - "0.0.0.0"
       - "--port"
       - "8000"
+{% if vllm_trust_remote_code | default(false) | bool %}
       - "--trust-remote-code"
+{% endif %}
       - "--gpu-memory-utilization"
       - "{{ vllm_gpu_memory_utilization }}"
       - "--max-model-len"
@@ -66,6 +71,9 @@ services:
     runtime: nvidia
     restart: unless-stopped
     ipc: host
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 2048
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       HF_HUB_OFFLINE: "{{ '1' if (vllm_offline | bool) else '0' }}"
@@ -92,7 +100,9 @@ services:
       - "0.0.0.0"
       - "--port"
       - "{{ vllm_embedding_port }}"
+{% if vllm_trust_remote_code | default(false) | bool %}
       - "--trust-remote-code"
+{% endif %}
       - "--gpu-memory-utilization"
       - "{{ vllm_embedding_gpu_memory_utilization }}"
       - "--max-model-len"
@@ -106,19 +116,25 @@ services:
     runtime: nvidia
 {% endif %}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 2048
     environment:
 {% if docling_gpu | bool %}
       NVIDIA_VISIBLE_DEVICES: all
-      DOCLING_DEVICE: cuda
-{% else %}
-      DOCLING_DEVICE: cpu
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
 {% endif %}
       DOCLING_SERVE_API_KEY: "{{ docling_api_key }}"
       DOCLING_SERVE_ENABLE_UI: "{{ 'true' if (docling_enable_ui | default(false)) else 'false' }}"
+      DOCLING_SERVE_ENABLE_API_DOCS: "false"
+      DOCLING_SERVE_ENABLE_CAPABILITIES_ENDPOINT: "false"
+      DOCLING_SERVE_SHOW_VERSION_INFO: "false"
+      DOCLING_SERVE_CORS_ORIGINS: "[]"
       DOCLING_SERVE_MAX_SYNC_WAIT: "600"
       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      DOCLING_SERVE_ARTIFACTS_PATH: "/opt/app-root/src/.cache/docling/models"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
       UVICORN_WORKERS: "1"
-      DOCLING_NUM_THREADS: "{{ docling_num_threads }}"
     volumes:
       - "{{ docling_tessdata_dir }}/fra.traineddata:/usr/share/tesseract/tessdata/fra.traineddata:ro"
       - "{{ docling_tessdata_dir }}/fr.traineddata:/usr/share/tesseract/tessdata/fr.traineddata:ro"
@@ -129,6 +145,9 @@ services:
     image: "{{ litellm_image }}"
     container_name: litellm
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 2048
     env_file:
       - "{{ inference_stack_litellm_dir }}/litellm.env"
     volumes:

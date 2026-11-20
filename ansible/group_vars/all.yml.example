@@ -33,6 +33,8 @@ vllm_kv_cache_dtype: "nvfp4"
 vllm_attention_backend: "flash_attn"
 vllm_max_num_seqs: 4
 vllm_max_num_batched_tokens: 32768
+# Qwen3.8/DFlash2/Embedding do not need custom modeling code; keep false.
+vllm_trust_remote_code: false
 # sm120/NVFP4 known workaround: set true if CUDA illegal instruction during decode.
 vllm_enforce_eager: false
 vllm_reasoning_parser: "qwen3"
@@ -58,7 +60,6 @@ docling_port: 5001
 # Generate with: openssl rand -hex 32. Must match the Open WebUI compose.
 docling_api_key: "CHANGE-ME-openssl-rand-hex-32"
 docling_enable_ui: false
-docling_num_threads: 8
 # For the Open WebUI compose (DOCLING_PARAMS):
 #   Tesseract (default, fastest, 0 VRAM):
 #     {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}

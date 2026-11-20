@@ -6,8 +6,8 @@
 #   - the latest stable NVIDIA .run driver (595.x branch, download.nvidia.com)
 #     and the NVIDIA container toolkit .debs
 #   - the Ubuntu 26.04 Proxmox LXC template
-#   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling (CUDA), PGVector and CUDA
-#     smoke images
+#   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling (CUDA and CPU), PGVector
+#     and CUDA smoke images
 #   - the Hugging Face models (target, DFlash2 drafter, embedding)
 #   - the Ubuntu 26.04 apt closure for the inference LXC
 #   - the French Tesseract data (fra + fr)
@@ -24,6 +24,7 @@
 #   NVIDIA_DRIVER_VERSION=595.104.02   # empty = latest stable 595.x
 #   HF_TOKEN=hf_...                   # gated Hugging Face models
 #   DOCLING_IMAGE=quay.io/docling-project/docling-serve-cu130:v1.38.2
+#   DOCLING_CPU_IMAGE=quay.io/docling-project/docling-serve:v1.38.2
 #   PGVECTOR_IMAGE=pgvector/pgvector:pg17
 #   TESSDATA_URL=https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata
 #
@@ -38,6 +39,7 @@ VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"
 LITELLM_IMAGE="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
 OPEN_WEBUI_IMAGE="${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.13.4}"
 DOCLING_IMAGE="${DOCLING_IMAGE:-quay.io/docling-project/docling-serve-cu130:v1.38.2}"
+DOCLING_CPU_IMAGE="${DOCLING_CPU_IMAGE:-quay.io/docling-project/docling-serve:v1.38.2}"
 PGVECTOR_IMAGE="${PGVECTOR_IMAGE:-pgvector/pgvector:pg17}"
 TESSDATA_URL="${TESSDATA_URL:-https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata}"
 CUDA_SMOKE_IMAGE="${CUDA_SMOKE_IMAGE:-nvidia/cuda:13.0.0-base-ubuntu24.04}"
@@ -87,16 +89,20 @@ Options:
   -h, --help            Show this help
 
 Environment:
-  NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest)
+  NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest stable 595.x)
   HF_TOKEN               Hugging Face token for gated models
-  VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
+  VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/DOCLING_CPU_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --output|-o) BUNDLE_DIR="$2"; shift 2 ;;
-    --vllm-version) VLLM_VERSION="$2"; VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"; shift 2 ;;
+    --output|-o)
+      [[ $# -ge 2 ]] || die "$1 needs a directory"
+      BUNDLE_DIR="$2"; shift 2 ;;
+    --vllm-version)
+      [[ $# -ge 2 ]] || die "$1 needs a version"
+      VLLM_VERSION="$2"; VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"; shift 2 ;;
     --skip-host) SKIP_HOST=true; shift ;;
     --skip-images) SKIP_IMAGES=true; shift ;;
     --skip-models) SKIP_MODELS=true; shift ;;
@@ -141,23 +147,33 @@ install_tools() {
   command -v "$SKOPEO" >/dev/null || die "skopeo not available"
 }
 
-# curl with resume, HF auth, and skip-existing behavior.
+# Download to <dest>.part, then atomically rename after a successful curl.
+# The Hugging Face token is passed through a 0600 curl config file so it is
+# not visible in the process list.
 fetch_url() {
-  local url="$1" dest="$2"
-  local -a auth=()
-  if [[ -n "$HF_TOKEN" && "$url" == *huggingface.co* ]]; then
-    auth=(-H "Authorization: Bearer ${HF_TOKEN}")
-  fi
+  local url="$1" dest="$2" part="${2}.part" auth_config=""
+  local -a curl_args=()
   mkdir -p "$(dirname "$dest")"
   if [[ -s "$dest" && "$FORCE" != "true" ]]; then
     info "exists: ${dest#"$BUNDLE_DIR"/}"
     return 0
   fi
   if [[ "$FORCE" == "true" ]]; then
-    rm -f "$dest"
+    rm -f "$dest" "$part"
+  fi
+  if [[ -n "$HF_TOKEN" && "$url" == *huggingface.co* ]]; then
+    auth_config=$(mktemp "${TMPDIR:-/tmp}/hf-curl.XXXXXX")
+    chmod 600 "$auth_config"
+    printf 'header = "Authorization: Bearer %s"\n' "$HF_TOKEN" > "$auth_config"
+    curl_args=(--config "$auth_config")
   fi
   info "download: ${url}"
-  curl -fL --retry 5 --retry-delay 5 --continue-at - "${auth[@]}" -o "$dest" "$url"
+  local rc=0
+  curl -fL --retry 5 --retry-delay 5 --continue-at - \
+    "${curl_args[@]}" -o "$part" "$url" || rc=$?
+  [[ -n "$auth_config" ]] && rm -f "$auth_config"
+  [[ $rc -eq 0 ]] || return $rc
+  mv -f "$part" "$dest"
 }
 
 image_digest() {
@@ -172,7 +188,7 @@ skopeo_image() {
     return 0
   fi
   log "Copying ${image} -> images/${name}.tar"
-  "$SKOPEO" copy --override-arch amd64 --retry-times 3 \
+  "$SKOPEO" copy --override-arch amd64 --override-os linux --retry-times 3 \
     "docker://${image}" "docker-archive:${tar}:${image}"
 }
 
@@ -261,6 +277,7 @@ fetch_images() {
   skopeo_image "$LITELLM_IMAGE" litellm
   skopeo_image "$OPEN_WEBUI_IMAGE" open_webui
   skopeo_image "$DOCLING_IMAGE" docling
+  skopeo_image "$DOCLING_CPU_IMAGE" docling-cpu
   skopeo_image "$PGVECTOR_IMAGE" pgvector
   skopeo_image "$CUDA_SMOKE_IMAGE" cuda-smoke
 }
@@ -298,7 +315,7 @@ fetch_models() {
 APT_PACKAGES=(
   openssh-server sudo python3 ca-certificates curl gnupg jq
   vim nano git htop rsync less unzip zstd acl
-  iproute2 net-tools pciutils lsof tcpdump nmap socat tmux tree procps
+  iproute2 net-tools pciutils lsof tmux tree procps
   docker.io docker-compose-v2
 )
 
@@ -357,13 +374,32 @@ write_manifest() {
   [[ -f "${BUNDLE_DIR}/host/NVIDIA_DRIVER_VERSION" ]] && \
     nvidia_driver=$(cat "${BUNDLE_DIR}/host/NVIDIA_DRIVER_VERSION")
 
-  local vllm_digest litellm_digest webui_digest docling_digest pgvector_digest cuda_digest
+  local target_revision="" draft_revision="" embedding_revision=""
+  [[ -f "${BUNDLE_DIR}/models/${TARGET_MODEL_DIR}/.hf_revision" ]] && \
+    target_revision=$(cat "${BUNDLE_DIR}/models/${TARGET_MODEL_DIR}/.hf_revision")
+  [[ -f "${BUNDLE_DIR}/models/${DRAFT_MODEL_DIR}/.hf_revision" ]] && \
+    draft_revision=$(cat "${BUNDLE_DIR}/models/${DRAFT_MODEL_DIR}/.hf_revision")
+  [[ -f "${BUNDLE_DIR}/models/${EMBEDDING_MODEL_DIR}/.hf_revision" ]] && \
+    embedding_revision=$(cat "${BUNDLE_DIR}/models/${EMBEDDING_MODEL_DIR}/.hf_revision")
+
+  local vllm_digest litellm_digest webui_digest docling_digest docling_cpu_digest pgvector_digest cuda_digest
   vllm_digest=$(image_digest "$VLLM_IMAGE")
   litellm_digest=$(image_digest "$LITELLM_IMAGE")
   webui_digest=$(image_digest "$OPEN_WEBUI_IMAGE")
   docling_digest=$(image_digest "$DOCLING_IMAGE")
+  docling_cpu_digest=$(image_digest "$DOCLING_CPU_IMAGE")
   pgvector_digest=$(image_digest "$PGVECTOR_IMAGE")
   cuda_digest=$(image_digest "$CUDA_SMOKE_IMAGE")
+
+  if [[ "$SKIP_IMAGES" != "true" ]]; then
+    [[ -n "$vllm_digest" ]] || die "cannot resolve the vLLM image digest"
+    [[ -n "$litellm_digest" ]] || die "cannot resolve the LiteLLM image digest"
+    [[ -n "$webui_digest" ]] || die "cannot resolve the Open WebUI image digest"
+    [[ -n "$docling_digest" ]] || die "cannot resolve the Docling CUDA image digest"
+    [[ -n "$docling_cpu_digest" ]] || die "cannot resolve the Docling CPU image digest"
+    [[ -n "$pgvector_digest" ]] || die "cannot resolve the pgvector image digest"
+    [[ -n "$cuda_digest" ]] || die "cannot resolve the CUDA smoke image digest"
+  fi
 
   jq -n \
     --arg generated "$(date -Is)" \
@@ -375,6 +411,8 @@ write_manifest() {
     --arg webui_digest "$webui_digest" \
     --arg docling_image "$DOCLING_IMAGE" \
     --arg docling_digest "$docling_digest" \
+    --arg docling_cpu_image "$DOCLING_CPU_IMAGE" \
+    --arg docling_cpu_digest "$docling_cpu_digest" \
     --arg pgvector_image "$PGVECTOR_IMAGE" \
     --arg pgvector_digest "$pgvector_digest" \
     --arg cuda_image "$CUDA_SMOKE_IMAGE" \
@@ -385,10 +423,13 @@ write_manifest() {
     --arg tessdata_url "$TESSDATA_URL" \
     --arg target_model "$TARGET_MODEL" \
     --arg target_dir "$TARGET_MODEL_DIR" \
+    --arg target_revision "$target_revision" \
     --arg draft_model "$DRAFT_MODEL" \
     --arg draft_dir "$DRAFT_MODEL_DIR" \
+    --arg draft_revision "$draft_revision" \
     --arg embedding_model "$EMBEDDING_MODEL" \
     --arg embedding_dir "$EMBEDDING_MODEL_DIR" \
+    --arg embedding_revision "$embedding_revision" \
     --arg ubuntu_release "$UBUNTU_RELEASE" \
     '{
       generated_at: $generated,
@@ -397,6 +438,7 @@ write_manifest() {
         litellm: {reference: $litellm_image, digest: $litellm_digest},
         open_webui: {reference: $webui_image, digest: $webui_digest},
         docling: {reference: $docling_image, digest: $docling_digest},
+        docling_cpu: {reference: $docling_cpu_image, digest: $docling_cpu_digest},
         pgvector: {reference: $pgvector_image, digest: $pgvector_digest},
         cuda_smoke: {reference: $cuda_image, digest: $cuda_digest}
       },
@@ -407,13 +449,27 @@ write_manifest() {
         tessdata_url: $tessdata_url
       },
       models: {
-        target: {repo: $target_model, dir: $target_dir},
-        draft: {repo: $draft_model, dir: $draft_dir},
-        embedding: {repo: $embedding_model, dir: $embedding_dir}
+        target: {repo: $target_model, dir: $target_dir, revision: $target_revision},
+        draft: {repo: $draft_model, dir: $draft_dir, revision: $draft_revision},
+        embedding: {repo: $embedding_model, dir: $embedding_dir, revision: $embedding_revision}
       },
       ubuntu_release: $ubuntu_release
     }' > "${BUNDLE_DIR}/manifest.json"
   info "manifest: ${BUNDLE_DIR}/manifest.json"
+}
+
+# Integrity manifest for transfer/media verification. This is not a signature:
+# it protects against truncation/corruption, while the bundle itself remains
+# trusted as a whole.
+write_checksums() {
+  log "Writing SHA256SUMS"
+  (
+    cd "$BUNDLE_DIR"
+    find . -type f ! -name 'SHA256SUMS' ! -name 'SHA256SUMS.tmp' ! -name '*.part' -print0 \
+      | sort -z | xargs -0 sha256sum > SHA256SUMS.tmp
+    mv -f SHA256SUMS.tmp SHA256SUMS
+  )
+  info "checksums: ${BUNDLE_DIR}/SHA256SUMS"
 }
 
 # ---------------------------------------------------------------------------
@@ -428,6 +484,7 @@ mkdir -p "${BUNDLE_DIR}"/{host,images,models,repo/pool,tessdata}
 [[ "$SKIP_APT" == "true" ]] || build_apt_repo
 [[ "$SKIP_TESSDATA" == "true" ]] || fetch_tessdata
 write_manifest
+write_checksums
 
 log "Bundle ready: ${BUNDLE_DIR}"
 du -sh "${BUNDLE_DIR}"/* 2>/dev/null || true

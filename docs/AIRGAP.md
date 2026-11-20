@@ -40,6 +40,7 @@ Le script installe les outils manquants (`curl`, `jq`, `python3`, `skopeo`,
   - `litellm.tar` — `ghcr.io/berriai/litellm:main-stable`
   - `open_webui.tar` — `ghcr.io/open-webui/open-webui:v0.13.4`
   - `docling.tar` — `quay.io/docling-project/docling-serve-cu130:v1.38.2`
+  - `docling-cpu.tar` — `quay.io/docling-project/docling-serve:v1.38.2`
   - `pgvector.tar` — `pgvector/pgvector:pg17`
   - `cuda-smoke.tar` — `nvidia/cuda:13.0.0-base-ubuntu24.04`
 - **models/** : `unsloth/Qwen3.8-27B-NVFP4`,
@@ -48,7 +49,9 @@ Le script installe les outils manquants (`curl`, `jq`, `python3`, `skopeo`,
 - **repo/** : closure apt Ubuntu 26.04 pour le LXC + `Packages.gz` + les `.deb`
   du toolkit NVIDIA ;
 - **tessdata/** : `fra.traineddata` + `fr.traineddata` (Tesseract fast) ;
-- **manifest.json** : versions, digests, modèles, révision HF.
+- **manifest.json** : versions, digests, modèles, révision HF ;
+- **SHA256SUMS** : empreintes de tous les fichiers du bundle, vérifiées par le
+  rôle `airgap` avant toute modification d'apt.
 
 > EasyOCR `latin_g2` (qui couvre le français) est **déjà dans l'image Docling** ;
 > il n'y a pas de modèle EasyOCR à télécharger séparément. Tesseract a besoin
@@ -69,12 +72,22 @@ sudo ./scripts/fetch-airgap-bundle.sh --force   # tout re-télécharger
 ```
 
 Le bundle pèse plusieurs dizaines de Go (modèles + images + repo apt).
+Vérifier son intégrité avant transfert :
+
+```bash
+( cd airgap-bundle && sha256sum -c SHA256SUMS )
+```
+
+Le rôle `airgap` refait cette vérification avant de toucher à apt. `SHA256SUMS`
+protège contre la troncature/corruption ; ce n'est pas une signature
+cryptographique du bundle.
 
 ## 2. Layout du bundle
 
 ```text
 airgap-bundle/
   manifest.json
+  SHA256SUMS
   host/
     NVIDIA-Linux-x86_64-<ver>.run
     NVIDIA_DRIVER_VERSION
@@ -85,6 +98,7 @@ airgap-bundle/
     litellm.tar
     open_webui.tar
     docling.tar
+    docling-cpu.tar
     pgvector.tar
     cuda-smoke.tar
   models/
@@ -165,14 +179,15 @@ Ce que font les rôles en mode airgap :
 - `lxc_docker` : installe Docker + toolkit, force `no-cgroups=true`, charge
   `images/cuda-smoke.tar`, teste `nvidia-smi` dans un conteneur ;
 - `inference_stack` :
-  - charge `images/litellm.tar`, `images/docling.tar` (et `images/vllm.tar` si
-    `vllm_start`) ;
+  - charge `images/litellm.tar`, `images/docling.tar` (ou
+    `images/docling-cpu.tar` si `docling_gpu: false`) et `images/vllm.tar` si
+    `vllm_start` ;
   - copie `tessdata/fra.traineddata` et `fr.traineddata` dans
     `/srv/llm/docling/tessdata/` ;
   - monte `/airgap-bundle/models` dans vLLM en lecture seule ;
   - démarre LiteLLM + Docling (± vLLM) avec `--pull never` ;
-  - Docling utilise l'image CUDA si `docling_gpu: true`, sinon l'image CPU
-    (à ajouter au bundle si tu déploies en airgap sans GPU).
+  - Docling utilise l'image CUDA si `docling_gpu: true`, sinon l'image CPU ;
+    les deux images sont dans le bundle (`docling.tar` / `docling-cpu.tar`).
 
 ## 6. Front airgap : Open WebUI + PGVector
 
@@ -183,6 +198,7 @@ cd /opt/openwebui
 docker load -i /tmp/open_webui.tar
 docker load -i /tmp/pgvector.tar
 cp .env.example .env
+chmod 600 .env
 $EDITOR .env
 ```
 
@@ -257,6 +273,13 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
   il peut utiliser le GPU (~1-2 GB VRAM) et Tesseract reste à 0 VRAM.
 - `table_mode=accurate` active TableFormer accurate pour les tableaux ; il
   tourne sur CPU et GPU (pas GPU-only) et c'est déjà le défaut Docling.
+- Les modèles Docling (layout/table) sont inclus dans l'image CPU (vérifié :
+  `artifacts_path` valide, aucun téléchargement au runtime). L'image CUDA
+  `cu130` utilise le même cache ; confirmer `DOCLING_SERVE_ARTIFACTS_PATH` au
+  premier démarrage sur la cible.
+- Le dépôt apt local reste en `trusted=yes` : `SHA256SUMS` couvre la
+  corruption/troncature, pas une signature cryptographique. Pour une signature
+  détachée, ajouter une clé GPG détenue hors bundle.
 - `ENABLE_PERSISTENT_CONFIG=false` dans le compose Open WebUI : le `.env` est
   la source de vérité. Les changements faits dans l'UI s'appliquent jusqu'au
   redémarrage mais ne sont pas enregistrés ; modifier `.env` puis

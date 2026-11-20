@@ -17,6 +17,8 @@ resource "proxmox_download_file" "ubuntu_lxc_template" {
   node_name           = var.vm_node_name
   url                 = var.ubuntu_lxc_template_url
   file_name           = var.ubuntu_lxc_template_filename
+  checksum            = var.ubuntu_lxc_template_checksum != "" ? var.ubuntu_lxc_template_checksum : null
+  checksum_algorithm  = var.ubuntu_lxc_template_checksum != "" ? var.ubuntu_lxc_template_checksum_algorithm : null
   overwrite           = false
   overwrite_unmanaged = true
 }

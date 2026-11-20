@@ -63,13 +63,36 @@
     group: root
     mode: '0644'
 
+- name: Read the airgap bundle manifest
+  ansible.builtin.slurp:
+    src: "{{ vllm_bundle_dir }}/manifest.json"
+  register: inference_stack_manifest_raw
+  when: vllm_offline | bool
+
+- name: Parse the airgap bundle manifest
+  ansible.builtin.set_fact:
+    inference_stack_bundle_manifest: "{{ inference_stack_manifest_raw.content | b64decode | from_json }}"
+  when: vllm_offline | bool
+
+- name: Use the image references recorded in the bundle manifest
+  ansible.builtin.set_fact:
+    vllm_image: "{{ inference_stack_bundle_manifest.images.vllm.reference }}"
+    litellm_image: "{{ inference_stack_bundle_manifest.images.litellm.reference }}"
+    docling_image: >-
+      {{ inference_stack_bundle_manifest.images.docling.reference
+         if (docling_gpu | bool)
+         else inference_stack_bundle_manifest.images.docling_cpu.reference }}
+  when: vllm_offline | bool
+
 - name: Deploy the Docker Compose stack
   ansible.builtin.template:
     src: compose.yaml.j2
     dest: "{{ inference_stack_compose_dir }}/compose.yaml"
     owner: root
     group: root
-    mode: '0644'
+    mode: '0600'
+  register: inference_stack_compose_file
+  no_log: true
 
 - name: Deploy the LiteLLM model routing configuration
   ansible.builtin.template:
@@ -86,25 +109,29 @@
     owner: root
     group: root
     mode: '0600'
+  no_log: true
 
 - name: Load the LiteLLM image from the bundle (airgap)
   ansible.builtin.command:
     cmd: "docker load -i {{ vllm_bundle_dir }}/images/litellm.tar"
-  changed_when: false
+  register: inference_stack_litellm_load
+  changed_when: "'Loaded image' in inference_stack_litellm_load.stdout"
   when: vllm_offline | bool
 
 - name: Load the vLLM image from the bundle (airgap)
   ansible.builtin.command:
     cmd: "docker load -i {{ vllm_bundle_dir }}/images/vllm.tar"
-  changed_when: false
+  register: inference_stack_vllm_load
+  changed_when: "'Loaded image' in inference_stack_vllm_load.stdout"
   when:
     - vllm_offline | bool
     - vllm_start | bool
 
 - name: Load the Docling image from the bundle (airgap)
   ansible.builtin.command:
-    cmd: "docker load -i {{ vllm_bundle_dir }}/images/docling.tar"
-  changed_when: false
+    cmd: "docker load -i {{ vllm_bundle_dir }}/images/{{ 'docling.tar' if (docling_gpu | bool) else 'docling-cpu.tar' }}"
+  register: inference_stack_docling_load
+  changed_when: "'Loaded image' in inference_stack_docling_load.stdout"
   when: docling_offline | bool
 
 - name: Validate the Docker Compose configuration
@@ -112,17 +139,38 @@
     cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml config --quiet"
   changed_when: false
 
+- name: Stop vLLM chat when vLLM is disabled
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml stop vllm"
+  register: inference_stack_stop_vllm
+  changed_when: "'Stopped' in inference_stack_stop_vllm.stdout"
+  when: not (vllm_start | bool)
+
+- name: Stop vLLM embedding when the service is deployed but vLLM is disabled
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml stop vllm-embedding"
+  register: inference_stack_stop_vllm_embedding
+  changed_when: "'Stopped' in inference_stack_stop_vllm_embedding.stdout"
+  when:
+    - vllm_embedding_enabled | bool
+    - not (vllm_start | bool)
+
 - name: Compute the compose up command
   ansible.builtin.set_fact:
     inference_stack_up_command: >-
-      docker compose -f {{ inference_stack_compose_dir }}/compose.yaml up -d
-      {{ 'litellm docling' if not (vllm_start | bool) else '' }}
+      docker compose -f {{ inference_stack_compose_dir }}/compose.yaml up -d --remove-orphans
       {{ '--pull never' if (vllm_offline | bool) else '' }}
+      {{ 'litellm docling' if not (vllm_start | bool) else '' }}
 
 - name: Start the inference stack
   ansible.builtin.command:
     cmd: "{{ inference_stack_up_command }}"
-  changed_when: false
+  register: inference_stack_up
+  changed_when: >-
+    (inference_stack_compose_file.changed | default(false)) or
+    ('Started' in inference_stack_up.stdout) or
+    ('Recreated' in inference_stack_up.stdout) or
+    ('Created' in inference_stack_up.stdout)
 
 - name: Wait for the LiteLLM port
   ansible.builtin.wait_for:
@@ -161,6 +209,7 @@
   retries: 30
   delay: 2
   changed_when: false
+  no_log: true
 
 - name: Show the inference endpoints
   ansible.builtin.debug:

@@ -4,8 +4,9 @@
 proxmox_api_url   = "https://192.0.2.1:8006/api2/json"
 proxmox_api_token = "root@pam!opentofu=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Set to false if you have a valid TLS certificate on Proxmox
-proxmox_insecure = true
+# Keep false when Proxmox has a valid certificate; set true only for a
+# self-signed test endpoint.
+proxmox_insecure = false
 
 # SSH user to access Proxmox nodes (default: root)
 # proxmox_ssh_username = "root"
@@ -38,6 +39,10 @@ dns_servers      = ["192.0.2.1"]
 # ubuntu_lxc_template_url      = "http://download.proxmox.com/images/system/ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
 # ubuntu_lxc_template_filename = "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
 # start_on_boot                = true
+
+# Optional but recommended: checksum of the template on the Proxmox host.
+# ubuntu_lxc_template_checksum = "<sha256>"
+# ubuntu_lxc_template_checksum_algorithm = "sha256"
 
 # --- Airgapped deployment ---
 # Copy host/ubuntu-26.04-standard_...tar.zst to /var/lib/vz/template/cache/ then:

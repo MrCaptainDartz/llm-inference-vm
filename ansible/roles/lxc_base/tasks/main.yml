@@ -16,6 +16,14 @@
     state: present
     update_cache: true
 
+- name: Remove legacy debug tools from the appliance
+  ansible.builtin.apt:
+    name:
+      - tcpdump
+      - nmap
+      - socat
+    state: absent
+
 - name: Configure key-only SSH for the appliance
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/99-llm-lxc.conf

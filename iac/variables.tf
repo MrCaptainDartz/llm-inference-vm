@@ -19,8 +19,8 @@ variable "proxmox_ssh_username" {
 
 variable "proxmox_insecure" {
   type        = bool
-  description = "Disable TLS certificate verification for the Proxmox API (set to false in production)"
-  default     = true
+  description = "Disable TLS certificate verification for the Proxmox API (keep false; set true only for a self-signed test endpoint)"
+  default     = false
 }
 
 # --- Proxmox node / storage ---
@@ -144,8 +144,8 @@ variable "lxc_ipv4" {
 
 variable "dns_servers" {
   type        = list(string)
-  description = "DNS servers configured in the LXC"
-  default     = ["9.9.9.9", "1.1.1.1"]
+  description = "DNS servers configured in the LXC (set the internal resolver on an airgapped site; empty = no explicit DNS)"
+  default     = []
 }
 
 # --- Images / templates ---
@@ -160,6 +160,23 @@ variable "ubuntu_lxc_template_filename" {
   type        = string
   description = "Filename of the Ubuntu 26.04 LXC template on Proxmox"
   default     = "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+}
+
+variable "ubuntu_lxc_template_checksum" {
+  type        = string
+  description = "Optional checksum of the LXC template (recommended; download.proxmox.com currently serves HTTP)"
+  default     = ""
+}
+
+variable "ubuntu_lxc_template_checksum_algorithm" {
+  type        = string
+  description = "Checksum algorithm for ubuntu_lxc_template_checksum"
+  default     = "sha256"
+
+  validation {
+    condition     = contains(["md5", "sha1", "sha224", "sha256", "sha384", "sha512"], var.ubuntu_lxc_template_checksum_algorithm)
+    error_message = "Use one of md5, sha1, sha224, sha256, sha384, sha512."
+  }
 }
 
 variable "ubuntu_lxc_template_preuploaded" {

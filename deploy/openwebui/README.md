@@ -47,6 +47,7 @@ collections.
 
 ```bash
 cp .env.example .env
+chmod 600 .env
 $EDITOR .env
 ```
 
@@ -62,6 +63,7 @@ Fill in:
 - `DOCLING_PARAMS` → OCR + table extraction (see below)
 - `ENABLE_PERSISTENT_CONFIG` → keep `false` so this `.env` wins over the UI
 - `ENABLE_SIGNUP` → `true` for the first boot, then `false`
+- `FORWARDED_ALLOW_IPS` → your reverse-proxy IP/CIDR (default `127.0.0.1`)
 - `OFFLINE_MODE` → `true` on the airgap site
 
 Then:
@@ -78,8 +80,9 @@ Open `http://<vm>:8080`; the first account created becomes admin. Then set
 the container with the new environment). With `ENABLE_PERSISTENT_CONFIG=false`,
 the Admin UI signup toggle is not persistent.
 
-The reverse proxy/TLS stays in front of `8080`; `FORWARDED_ALLOW_IPS=*` lets
-Open WebUI trust `X-Forwarded-*`.
+The reverse proxy/TLS stays in front of `8080`. Keep
+`FORWARDED_ALLOW_IPS=127.0.0.1` unless a proxy forwards requests; in that case
+set it to the proxy IP or Docker network, not `*`.
 
 ## OCR and tables: Tesseract/EasyOCR + TableFormer
 

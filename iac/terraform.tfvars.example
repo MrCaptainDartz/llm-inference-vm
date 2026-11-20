@@ -14,28 +14,18 @@ proxmox_insecure = true
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@workstation"
 
 # --- Proxmox node / storage ---
-vm_node_name       = "pve-node1"
-disk_datastore_id  = "local-zfs"   # LXC rootfs + front VM disk
-image_datastore_id = "local"       # ISO + snippets (cloud image)
-template_datastore_id = "local"    # vztmpl (Ubuntu 26.04 LXC template)
+vm_node_name          = "pve-node1"
+disk_datastore_id     = "local-zfs"   # LXC rootfs
+template_datastore_id = "local"       # vztmpl
 
-# --- Inference LXC (vLLM + LiteLLM) ---
+# --- Inference LXC (vLLM + LiteLLM + Docling) ---
 lxc_id             = 120
 lxc_name           = "llm-lxc"
 lxc_cores          = 8
 lxc_memory_mb      = 32768          # vLLM loads the 27B weights through CPU RAM
-lxc_disk_size_gb   = 150            # rootfs: images + models/HF cache
+lxc_disk_size_gb   = 150            # rootfs: images + models/HF cache + Docling models
 lxc_unprivileged   = true           # GPU via the Proxmox NVIDIA hook
 lxc_ipv4           = "192.0.2.10/24"
-
-# --- Front VM (Open WebUI + Docling, no GPU) ---
-front_vm_id          = 112
-front_vm_name        = "llm-webui"
-front_vm_cores       = 4
-front_vm_memory_mb   = 8192
-front_vm_disk_size_gb = 80
-front_vm_ipv4        = "192.0.2.11/24"
-front_vm_user        = "ubuntu"
 
 # --- Network ---
 network_bridge   = "vmbr0"
@@ -43,28 +33,12 @@ network_gateway  = "192.0.2.1"
 # network_vlan_id = 100
 network_firewall = true
 dns_servers      = ["192.0.2.1"]
-dns_domain       = "."
-
-# --- Front VM hardware ---
-# cpu_type             = "host"
-# machine_type         = "q35"
-# bios                 = "ovmf"
-# vga_type             = "virtio"
-# keyboard_layout      = "fr"
-# start_on_boot        = true
-# efi_pre_enrolled_keys = false
 
 # --- Images / templates ---
-# ubuntu_cloud_image_url      = "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
-# ubuntu_cloud_image_filename = "ubuntu-26.04-server-cloudimg-amd64.img"
-# ubuntu_lxc_template_url     = "http://download.proxmox.com/images/system/ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+# ubuntu_lxc_template_url      = "http://download.proxmox.com/images/system/ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
 # ubuntu_lxc_template_filename = "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
-# enable_cloudinit_snippet    = true
-# snippet_datastore_id        = "local"
+# start_on_boot                = true
 
 # --- Airgapped deployment ---
-# The bundle (scripts/fetch-airgap-bundle.sh) ships the cloud image and the LXC template.
-# Upload/copy them to the node datastores before apply and set:
-# cloud_image_preuploaded       = true
+# Copy host/ubuntu-26.04-standard_...tar.zst to /var/lib/vz/template/cache/ then:
 # ubuntu_lxc_template_preuploaded = true
-# enable_cloudinit_snippet      = false

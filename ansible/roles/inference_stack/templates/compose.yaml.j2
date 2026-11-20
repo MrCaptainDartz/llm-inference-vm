@@ -99,6 +99,32 @@ services:
       - "{{ vllm_embedding_max_model_len }}"
 {% endif %}
 
+  docling:
+    image: "{{ docling_image }}"
+    container_name: docling
+{% if docling_gpu | bool %}
+    runtime: nvidia
+{% endif %}
+    restart: unless-stopped
+    environment:
+{% if docling_gpu | bool %}
+      NVIDIA_VISIBLE_DEVICES: all
+      DOCLING_DEVICE: cuda
+{% else %}
+      DOCLING_DEVICE: cpu
+{% endif %}
+      DOCLING_SERVE_API_KEY: "{{ docling_api_key }}"
+      DOCLING_SERVE_ENABLE_UI: "{{ 'true' if (docling_enable_ui | default(false)) else 'false' }}"
+      DOCLING_SERVE_MAX_SYNC_WAIT: "600"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      UVICORN_WORKERS: "1"
+      DOCLING_NUM_THREADS: "{{ docling_num_threads }}"
+    volumes:
+      - "{{ docling_tessdata_dir }}/fra.traineddata:/usr/share/tesseract/tessdata/fra.traineddata:ro"
+      - "{{ docling_tessdata_dir }}/fr.traineddata:/usr/share/tesseract/tessdata/fr.traineddata:ro"
+    ports:
+      - "{{ docling_port }}:{{ docling_port }}"
+
   litellm:
     image: "{{ litellm_image }}"
     container_name: litellm

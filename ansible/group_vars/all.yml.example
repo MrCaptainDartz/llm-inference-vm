@@ -1,25 +1,19 @@
 ---
 # Copy to 'all.yml' (gitignored — may hold environment-specific or sensitive values) and fill in your values.
 
-# --- Inference services account (non-admin) ---
+# --- Inference LXC account (non-admin) ---
 inference_user: "inference"
-inference_ssh_keys: []
-#   - "ssh-ed25519 AAAAC3... deploy-key"
-
-# --- SSH hardening (front VM) ---
 ssh_allow_tcp_forwarding: false
-security_hardening_fail2ban_ignoreip: "127.0.0.1/8 ::1"
 
 # --- System ---
 system_timezone_value: "Europe/Paris"
-system_reboot_on_kernel_update: true
 
 # --- LiteLLM proxy (master key, no database) ---
 # Generate with: openssl rand -hex 32
 litellm_master_key: "CHANGE-ME-openssl-rand-hex-32"
 litellm_port: 4000
 litellm_image: "ghcr.io/berriai/litellm:main-stable"
-# Front VM -> inference LXC. Keep in sync with iac/terraform.tfvars (lxc_ipv4).
+# For the Open WebUI compose on your existing Docker VM:
 litellm_base_url: "http://192.0.2.10:4000/v1"
 
 # --- Inference LXC: vLLM chat ---
@@ -31,7 +25,9 @@ vllm_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode |
 # DFlash2 draft: num_speculative_tokens = block_size - 1 (drafter block_size = 8).
 vllm_speculative_method: "dflash"
 vllm_speculative_num_tokens: 7
-vllm_gpu_memory_utilization: 0.82
+# 0.78 when Docling uses the GPU (layout/table models); 0.82 otherwise.
+# The role computes this automatically from docling_gpu; override only if needed.
+# vllm_gpu_memory_utilization: "0.78"
 vllm_max_model_len: 262144
 vllm_kv_cache_dtype: "nvfp4"
 vllm_attention_backend: "flash_attn"
@@ -42,7 +38,7 @@ vllm_enforce_eager: false
 vllm_reasoning_parser: "qwen3"
 vllm_tool_call_parser: "qwen3_coder"
 vllm_enable_auto_tool_choice: true
-# Start the vLLM services. Keep false on a host without the 48 GB GPU (pve-node1).
+# Start vLLM. Keep false on a host without the 48 GB GPU (pve-node1).
 vllm_start: true
 vllm_hf_token: ""
 
@@ -54,19 +50,33 @@ vllm_embedding_gpu_memory_utilization: 0.06
 vllm_embedding_max_model_len: 32768
 vllm_embedding_port: 8001
 
+# --- Inference LXC: Docling (document parsing) ---
+# true = CUDA image + GPU layout/table models on the 48 GB host.
+# false = CPU image on pve-node1 (GPU 8 Go test host).
+docling_gpu: true
+docling_port: 5001
+# Generate with: openssl rand -hex 32. Must match the Open WebUI compose.
+docling_api_key: "CHANGE-ME-openssl-rand-hex-32"
+docling_enable_ui: false
+docling_num_threads: 8
+# For the Open WebUI compose (DOCLING_PARAMS):
+#   Tesseract (default, fastest, 0 VRAM):
+#     {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+#   EasyOCR (better on rotated/noisy scans, ~1-2 GB VRAM if GPU, slower on CPU):
+#     {"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+# table_mode=accurate is TableFormer accurate (CPU/GPU, not GPU-only).
+# In deploy/openwebui, ENABLE_PERSISTENT_CONFIG=false makes .env win over the UI.
+docling_ocr_preset: "tesseract"
+docling_ocr_lang: ["fr"]
+# For the Open WebUI compose:
+docling_url: "http://192.0.2.10:5001"
+
 # --- Docker GPU smoke test (nvidia-smi only, no model load) ---
 docker_gpu_smoke_test: true
 docker_gpu_smoke_image: "nvidia/cuda:13.0.0-base-ubuntu24.04"
 
-# --- Front VM: Open WebUI + Docling ---
-docling_enabled: true
-docling_gpu: false
-open_webui_enabled: true
-open_webui_connect_litellm: true
-open_webui_embedding_model: "qwen3-embedding-0.6b"
-
 # --- Airgap deployment ---
-# 1. Build on bundle_builder: scripts/fetch-airgap-bundle.sh (or playbook-download.yml)
+# 1. Build on bundle_builder: scripts/fetch-airgap-bundle.sh
 # 2. Mount/transfer the bundle at llm_bundle_dir.
 # 3. Set airgap_mode: true and run playbook.yml.
 # airgap_mode: true

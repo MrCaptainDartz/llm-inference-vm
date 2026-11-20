@@ -43,3 +43,6 @@ __pycache__/
 # Airgap bundle (built by playbook-download.yml, tens of GB)
 airgap-bundle/*
 !airgap-bundle/.gitkeep
+# Open WebUI compose (existing Docker VM) — local secrets
+deploy/openwebui/.env
+deploy/openwebui/*.sql

@@ -62,8 +62,10 @@
         export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
       fi
 
-      # Point Docker tools to Podman Rootless socket
+      {% if inference_user_configure_podman_socket | default(false) %}
+      # Point Docker tools to the rootless Podman socket
       export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
+      {% endif %}
 
       export PATH="$HOME/.local/bin:$PATH"
     create: true

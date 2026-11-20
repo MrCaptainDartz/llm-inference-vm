@@ -9,8 +9,7 @@ Le script `scripts/fetch-airgap-bundle.sh` remplace l'ancien rôle Ansible
 
 ## 1. Construire le bundle (machine en ligne)
 
-Sur un builder **Ubuntu 26.04 amd64** avec internet (idéalement une instance
-fraîche de la même image cloud que la VM front) :
+Sur un builder **Ubuntu 26.04 amd64** avec internet :
 
 ```bash
 git clone <repo> llm-inference-vm
@@ -19,20 +18,28 @@ sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
 ```
 
 Le script installe les outils manquants (`curl`, `jq`, `python3`, `skopeo`,
-`podman`/`docker`, `dpkg-dev` dans le conteneur apt). Il télécharge :
+`podman`/`docker`). Il télécharge :
 
 - **host/** : dernier driver NVIDIA `.run`, `.deb` du NVIDIA Container Toolkit,
   template LXC Ubuntu 26.04, `NVIDIA_DRIVER_VERSION` ;
-- **cloudimg/** : image cloud Ubuntu 26.04 ;
-- **images/** : `vllm.tar` (`vllm/vllm-openai:v0.34.0`, CUDA 13),
-  `litellm.tar`, `open_webui.tar`, `docling.tar` (CPU), `cuda-smoke.tar` ;
+- **images/** :
+  - `vllm.tar` — `vllm/vllm-openai:v0.34.0` (CUDA 13)
+  - `litellm.tar` — `ghcr.io/berriai/litellm:main-stable`
+  - `open_webui.tar` — `ghcr.io/open-webui/open-webui:v0.13.4`
+  - `docling.tar` — `quay.io/docling-project/docling-serve-cu130:v1.38.2`
+  - `pgvector.tar` — `pgvector/pgvector:pg17`
+  - `cuda-smoke.tar` — `nvidia/cuda:13.0.0-base-ubuntu24.04`
 - **models/** : `unsloth/Qwen3.8-27B-NVFP4`,
   `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal`,
   `Qwen/Qwen3-Embedding-0.6B` (snapshots HF complets, révision figée) ;
-- **repo/** : closure apt Ubuntu 26.04 pour le LXC et la VM front +
-  `Packages.gz` + les `.deb` du toolkit NVIDIA ;
-- **docling-artifacts/** : modèles Docling pré-téléchargés (CPU) ;
+- **repo/** : closure apt Ubuntu 26.04 pour le LXC + `Packages.gz` + les `.deb`
+  du toolkit NVIDIA ;
+- **tessdata/** : `fra.traineddata` + `fr.traineddata` (Tesseract fast) ;
 - **manifest.json** : versions, digests, modèles, révision HF.
+
+> EasyOCR `latin_g2` (qui couvre le français) est **déjà dans l'image Docling** ;
+> il n'y a pas de modèle EasyOCR à télécharger séparément. Tesseract a besoin
+> des fichiers `fra`/`fr` ci-dessus.
 
 Options utiles :
 
@@ -44,7 +51,7 @@ NVIDIA_DRIVER_VERSION=595.104.02 sudo ./scripts/fetch-airgap-bundle.sh
 HF_TOKEN=hf_xxx sudo ./scripts/fetch-airgap-bundle.sh
 
 # Reprendre un build interrompu
-sudo ./scripts/fetch-airgap-bundle.sh --skip-apt --skip-docling
+sudo ./scripts/fetch-airgap-bundle.sh --skip-apt --skip-tessdata
 sudo ./scripts/fetch-airgap-bundle.sh --force   # tout re-télécharger
 ```
 
@@ -60,13 +67,12 @@ airgap-bundle/
     NVIDIA_DRIVER_VERSION
     nvidia-container-toolkit/*.deb
     ubuntu-26.04-standard_26.04-1_amd64.tar.zst
-  cloudimg/
-    ubuntu-26.04-server-cloudimg-amd64.img
   images/
     vllm.tar
     litellm.tar
     open_webui.tar
     docling.tar
+    pgvector.tar
     cuda-smoke.tar
   models/
     qwen3.8-27b-nvfp4/
@@ -75,7 +81,9 @@ airgap-bundle/
   repo/
     pool/*.deb
     Packages.gz
-  docling-artifacts/
+  tessdata/
+    fra.traineddata
+    fr.traineddata
 ```
 
 ## 3. Transférer
@@ -86,24 +94,24 @@ Vers l'hôte Proxmox (le LXC monte ce chemin en lecture seule) :
 rsync -a --info=progress2 airgap-bundle/ root@192.0.2.1:/srv/airgap-bundle/
 ```
 
-Vers la VM front (elle a besoin de `repo/`, `images/`, `docling-artifacts/`) :
+Vers la VM Docker existante (Open WebUI + PGVector), il faut seulement les
+images et le compose :
 
 ```bash
-rsync -a --info=progress2 airgap-bundle/ ubuntu@192.0.2.11:/airgap-bundle/
+rsync -a airgap-bundle/images/open_webui.tar \
+         airgap-bundle/images/pgvector.tar \
+         ubuntu@<vm>:/tmp/
+scp -r deploy/openwebui ubuntu@<vm>:/opt/openwebui
 ```
-
-L'hôte Proxmox a besoin de `host/` et `cloudimg/` pour l'installation du
-driver/toolkit/template/image cloud. Le LXC a besoin de `repo/`, `images/`,
-`models/`. La VM front a besoin de `repo/`, `images/`, `docling-artifacts/`.
 
 ## 4. Installer l'hôte Proxmox
 
 Suivre `docs/HOST-INSTALL.md` :
 
 1. driver NVIDIA + toolkit depuis `host/` ;
-2. copie du template LXC et de l'image cloud dans les datastores ;
-3. `terraform.tfvars` en mode airgap (`cloud_image_preuploaded`,
-   `ubuntu_lxc_template_preuploaded`) puis `tofu apply` ;
+2. copie du template LXC dans `/var/lib/vz/template/cache/` ;
+3. `terraform.tfvars` : `ubuntu_lxc_template_preuploaded = true`, puis
+   `tofu apply` (le LXC uniquement) ;
 4. `scripts/proxmox-lxc-gpu.sh <CTID> --bundle /srv/airgap-bundle` ;
 5. Ansible.
 
@@ -116,10 +124,17 @@ airgap_mode: true
 llm_bundle_dir: /airgap-bundle
 
 litellm_master_key: "<openssl rand -hex 32>"
+docling_api_key: "<openssl rand -hex 32>"
 litellm_base_url: "http://192.0.2.10:4000/v1"
+docling_url: "http://192.0.2.10:5001"
 
-# Sur le host 48 Go uniquement. Laisser false sur pve-node1 (GPU 8 Go).
+# Site 48 Go :
+docling_gpu: true
 vllm_start: true
+# pve-node1 (GPU 8 Go) : false / false
+
+docling_ocr_preset: "tesseract"
+docling_ocr_lang: ["fr"]
 ```
 
 Puis :
@@ -133,22 +148,59 @@ Ce que font les rôles en mode airgap :
 
 - `airgap` : bascule apt sur `file:///airgap-bundle/repo` et désactive les
   sources réseau ;
-- `lxc_base` / `essential_packages` / `podman` / `security_hardening` :
-  installent depuis le repo local ;
-- `lxc_docker` : installe Docker + toolkit depuis le repo, charge
+- `lxc_base` / `lxc_docker` : installent depuis le repo local ;
+- `lxc_docker` : installe Docker + toolkit, force `no-cgroups=true`, charge
   `images/cuda-smoke.tar`, teste `nvidia-smi` dans un conteneur ;
-- `inference_stack` : charge `images/litellm.tar` (et `images/vllm.tar` si
-  `vllm_start`), monte `/airgap-bundle/models` en lecture seule, démarre
-  LiteLLM ± vLLM avec `--pull never` ;
-- `docling` : charge `images/docling.tar`, copie `docling-artifacts/` et
-  démarre Docling avec `DOCLING_SERVE_ARTIFACTS_PATH=/app/data` ;
-- `open_webui` : charge `images/open_webui.tar`, `OFFLINE_MODE=true`, pointe
-  vers LiteLLM.
+- `inference_stack` :
+  - charge `images/litellm.tar`, `images/docling.tar` (et `images/vllm.tar` si
+    `vllm_start`) ;
+  - copie `tessdata/fra.traineddata` et `fr.traineddata` dans
+    `/srv/llm/docling/tessdata/` ;
+  - monte `/airgap-bundle/models` dans vLLM en lecture seule ;
+  - démarre LiteLLM + Docling (± vLLM) avec `--pull never` ;
+  - Docling utilise l'image CUDA si `docling_gpu: true`, sinon l'image CPU
+    (à ajouter au bundle si tu déploies en airgap sans GPU).
 
-Le LXC monte le bundle de l'hôte via `mpN -> /airgap-bundle` (script hôte).
-La VM front reçoit le bundle par rsync.
+## 6. Front airgap : Open WebUI + PGVector
 
-## 6. Vérifier
+Sur la VM Docker existante :
+
+```bash
+cd /opt/openwebui
+docker load -i /tmp/open_webui.tar
+docker load -i /tmp/pgvector.tar
+cp .env.example .env
+$EDITOR .env
+```
+
+Dans `.env` :
+
+- `LITELLM_BASE_URL` / `DOCLING_SERVER_URL` → l'IP du LXC ;
+- `LITELLM_API_KEY` = `litellm_master_key` ;
+- `DOCLING_API_KEY` = `docling_api_key` ;
+- `POSTGRES_PASSWORD` / `WEBUI_SECRET_KEY` (hex) ;
+- `DOCLING_PARAMS` :
+  ```json
+  {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+  ```
+  ou
+  ```json
+  {"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+  ```
+- `ENABLE_PERSISTENT_CONFIG=false` (le `.env` gagne sur la DB/UI) ;
+- `ENABLE_SIGNUP=true` au premier boot puis `false` ;
+- `OFFLINE_MODE=true`.
+
+Puis :
+
+```bash
+docker compose up -d --pull never
+```
+
+Le compose référence les tags exacts `open-webui:v0.13.4` et
+`pgvector/pgvector:pg17` chargés depuis les tarballs. Aucun accès registre.
+
+## 7. Vérifier
 
 Sur le LXC :
 
@@ -156,8 +208,17 @@ Sur le LXC :
 nvidia-smi -L
 docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi -L
 docker ps
-docker logs -f vllm          # sur le host 48 Go
-curl -s http://127.0.0.1:8000/v1/models
+docker logs -f docling
+docker exec docling tesseract --list-langs   # eng, fr, fra, osd
+curl -s -H "X-Api-Key: $DOCLING_KEY" http://127.0.0.1:5001/health
+```
+
+Sur la VM front :
+
+```bash
+docker compose ps
+curl -s http://127.0.0.1:8080/health
+docker compose exec postgres psql -U openwebui -d openwebui -c '\dx vector'
 ```
 
 Depuis le LAN :
@@ -167,26 +228,25 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
   http://192.0.2.10:4000/v1/models
 ```
 
-Sur la VM front :
-
-```bash
-curl -s http://192.0.2.11:8080/health
-curl -s http://127.0.0.1:5001/health
-```
-
-Puis ouvrir `http://192.0.2.11:8080`, créer le premier compte admin, et
-indexer un PDF : Docling extrait, LiteLLM route les embeddings vers vLLM.
-
-## 7. Notes
+## 8. Notes
 
 - Le bundle est figé au moment du build ; `manifest.json` permet de savoir
   exactement quelles images/modèles sont installés.
-- Les images `open-webui:main` et `docling:latest` sont résolues au build et
-  conservées dans les tarballs ; le runtime ne tire jamais depuis le réseau.
+- Les images `open-webui:v0.13.4` et `pgvector/pgvector:pg17` sont épinglées ;
+  `litellm:main-stable` est résolue au build et conservée dans le tarball.
 - Le script prend par défaut le **dernier** driver NVIDIA. Si le kernel PVE
   n'est pas encore supporté par DKMS, épingler une version connue bonne.
-- La clé `litellm_master_key` est le seul secret applicatif partagé entre le
-  LXC et la VM front ; elle est dans `all.yml` (gitignoré) et dans
-  `/srv/llm/litellm/litellm.env` (0600) sur le LXC.
-- vLLM n'écoute que sur `127.0.0.1:8000` dans le LXC et sur le réseau Docker
-  interne ; seul LiteLLM `:4000` est exposé au LAN.
+- Tesseract est le moteur OCR par défaut (CPU, 0 VRAM, le plus rapide).
+  EasyOCR est disponible pour les scans inversés/bruités ; sur le site 48 Go,
+  il peut utiliser le GPU (~1-2 GB VRAM) et Tesseract reste à 0 VRAM.
+- `table_mode=accurate` active TableFormer accurate pour les tableaux ; il
+  tourne sur CPU et GPU (pas GPU-only) et c'est déjà le défaut Docling.
+- `ENABLE_PERSISTENT_CONFIG=false` dans le compose Open WebUI : le `.env` est
+  la source de vérité. Les changements faits dans l'UI s'appliquent jusqu'au
+  redémarrage mais ne sont pas enregistrés ; modifier `.env` puis
+  `docker compose up -d` pour un réglage durable.
+- Le seul secret applicatif partagé LXC ↔ VM front est
+  `litellm_master_key` + `docling_api_key` ; ils sont dans `all.yml`
+  (gitignoré), `/srv/llm/litellm/litellm.env` (0600) et le `.env` du compose.
+- vLLM n'écoute que sur `127.0.0.1:8000` / le réseau Docker interne ; seuls
+  LiteLLM `:4000` et Docling `:5001` sont exposés au LAN.

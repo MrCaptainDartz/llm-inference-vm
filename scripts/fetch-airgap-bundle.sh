@@ -2,14 +2,14 @@
 #
 # Build the offline bundle for the LLM inference stack.
 #
-# Run this on an ONLINE Ubuntu 26.04 amd64 builder (the same cloud image as the
-# front VM is ideal). It downloads, at build time:
+# Run this on an ONLINE Ubuntu 26.04 amd64 builder. It downloads, at build time:
 #   - the latest NVIDIA .run driver and the NVIDIA container toolkit .debs
-#   - the Ubuntu 26.04 Proxmox LXC template and cloud image
-#   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling and CUDA smoke images
+#   - the Ubuntu 26.04 Proxmox LXC template
+#   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling (CUDA), PGVector and CUDA
+#     smoke images
 #   - the Hugging Face models (target, DFlash2 drafter, embedding)
-#   - the Ubuntu 26.04 apt closure for the LXC and the front VM
-#   - pre-baked Docling artifacts
+#   - the Ubuntu 26.04 apt closure for the inference LXC
+#   - the French Tesseract data (fra + fr)
 #   - a manifest.json with the resolved versions/digests
 #
 # The target Proxmox host does not need internet. See docs/AIRGAP.md and
@@ -22,6 +22,9 @@
 #   VLLM_VERSION=0.34.0
 #   NVIDIA_DRIVER_VERSION=595.104.02   # empty = latest
 #   HF_TOKEN=hf_...                   # gated Hugging Face models
+#   DOCLING_IMAGE=quay.io/docling-project/docling-serve-cu130:v1.38.2
+#   PGVECTOR_IMAGE=pgvector/pgvector:pg17
+#   TESSDATA_URL=https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata
 #
 set -euo pipefail
 
@@ -32,8 +35,10 @@ BUNDLE_DIR="${REPO_DIR}/airgap-bundle"
 VLLM_VERSION="${VLLM_VERSION:-0.34.0}"
 VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"
 LITELLM_IMAGE="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
-OPEN_WEBUI_IMAGE="${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main}"
-DOCLING_IMAGE="${DOCLING_IMAGE:-quay.io/docling-project/docling-serve:latest}"
+OPEN_WEBUI_IMAGE="${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.13.4}"
+DOCLING_IMAGE="${DOCLING_IMAGE:-quay.io/docling-project/docling-serve-cu130:v1.38.2}"
+PGVECTOR_IMAGE="${PGVECTOR_IMAGE:-pgvector/pgvector:pg17}"
+TESSDATA_URL="${TESSDATA_URL:-https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata}"
 CUDA_SMOKE_IMAGE="${CUDA_SMOKE_IMAGE:-nvidia/cuda:13.0.0-base-ubuntu24.04}"
 
 TARGET_MODEL="${TARGET_MODEL:-unsloth/Qwen3.8-27B-NVFP4}"
@@ -46,8 +51,6 @@ EMBEDDING_MODEL_DIR="qwen3-embedding-0.6b"
 UBUNTU_RELEASE="${UBUNTU_RELEASE:-26.04}"
 LXC_TEMPLATE_FILENAME="${LXC_TEMPLATE_FILENAME:-ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
 LXC_TEMPLATE_URL="${LXC_TEMPLATE_URL:-http://download.proxmox.com/images/system/${LXC_TEMPLATE_FILENAME}}"
-CLOUD_IMAGE_FILENAME="${CLOUD_IMAGE_FILENAME:-ubuntu-26.04-server-cloudimg-amd64.img}"
-CLOUD_IMAGE_URL="${CLOUD_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/26.04/release/${CLOUD_IMAGE_FILENAME}}"
 
 NVIDIA_TOOLKIT_REPO="${NVIDIA_TOOLKIT_REPO:-https://nvidia.github.io/libnvidia-container/stable/deb/amd64}"
 NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-}"
@@ -58,7 +61,7 @@ SKIP_HOST=false
 SKIP_IMAGES=false
 SKIP_MODELS=false
 SKIP_APT=false
-SKIP_DOCLING=false
+SKIP_TESSDATA=false
 
 RUNTIME=""
 SKOPEO=""
@@ -74,18 +77,18 @@ usage() {
 Options:
   --output DIR          Bundle directory (default: <repo>/airgap-bundle)
   --vllm-version VER    vLLM image tag (default: 0.34.0)
-  --skip-host           Do not download host driver/toolkit/template/cloud image
+  --skip-host           Do not download host driver/toolkit/LXC template
   --skip-images         Do not copy container images
   --skip-models         Do not download Hugging Face models
   --skip-apt            Do not build the Ubuntu apt repository
-  --skip-docling        Do not bake Docling artifacts
+  --skip-tessdata       Do not download the French Tesseract data
   --force               Re-download files that already exist
   -h, --help            Show this help
 
 Environment:
   NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest)
   HF_TOKEN               Hugging Face token for gated models
-  VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/CUDA_SMOKE_IMAGE
+  VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
 EOF
 }
 
@@ -97,7 +100,7 @@ while [[ $# -gt 0 ]]; do
     --skip-images) SKIP_IMAGES=true; shift ;;
     --skip-models) SKIP_MODELS=true; shift ;;
     --skip-apt) SKIP_APT=true; shift ;;
-    --skip-docling) SKIP_DOCLING=true; shift ;;
+    --skip-tessdata) SKIP_TESSDATA=true; shift ;;
     --force) FORCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (use --help)" ;;
@@ -243,8 +246,6 @@ PY
 fetch_host_images() {
   log "Ubuntu LXC template"
   fetch_url "$LXC_TEMPLATE_URL" "${BUNDLE_DIR}/host/${LXC_TEMPLATE_FILENAME}"
-  log "Ubuntu cloud image"
-  fetch_url "$CLOUD_IMAGE_URL" "${BUNDLE_DIR}/cloudimg/${CLOUD_IMAGE_FILENAME}"
 }
 
 # ---------------------------------------------------------------------------
@@ -257,6 +258,7 @@ fetch_images() {
   skopeo_image "$LITELLM_IMAGE" litellm
   skopeo_image "$OPEN_WEBUI_IMAGE" open_webui
   skopeo_image "$DOCLING_IMAGE" docling
+  skopeo_image "$PGVECTOR_IMAGE" pgvector
   skopeo_image "$CUDA_SMOKE_IMAGE" cuda-smoke
 }
 
@@ -288,21 +290,12 @@ fetch_models() {
 }
 
 # ---------------------------------------------------------------------------
-# Ubuntu apt closure for the LXC and the front VM
+# Ubuntu apt closure for the inference LXC (Docker rootful, no Podman)
 # ---------------------------------------------------------------------------
 APT_PACKAGES=(
-  # Base LXC / front VM
   openssh-server sudo python3 ca-certificates curl gnupg jq
-  vim nano git git-lfs ripgrep fd-find wget netcat-openbsd dnsutils
-  iproute2 net-tools pciutils
-  iputils-ping traceroute tcpdump nmap socat btop htop iotop iftop
-  sysstat procps nvtop strace lsof tmux tree unzip zstd rsync less file
-  build-essential acl ufw systemd-timesyncd qemu-guest-agent
-  # Security hardening (front VM)
-  fail2ban auditd audispd-plugins apparmor apparmor-utils libpam-pwquality
-  # Podman rootless (front VM)
-  podman podman-compose uidmap slirp4netns fuse-overlayfs dbus-user-session
-  # Docker (inference LXC; also carries docker compose v2)
+  vim nano git htop rsync less unzip zstd acl
+  iproute2 net-tools pciutils lsof tcpdump nmap socat tmux tree procps
   docker.io docker-compose-v2
 )
 
@@ -342,53 +335,14 @@ build_apt_repo() {
 }
 
 # ---------------------------------------------------------------------------
-# Docling artifacts (CPU image; no GPU needed on the builder)
+# French Tesseract data (Docling's Tesseract preset expects fr/fra)
 # ---------------------------------------------------------------------------
-bake_docling() {
-  log "Baking Docling artifacts"
-  mkdir -p "${BUNDLE_DIR}/docling-artifacts"
-  if [[ "$FORCE" == "true" ]]; then
-    rm -rf "${BUNDLE_DIR}/docling-artifacts"/*
-  fi
-
-  "$RUNTIME" load -i "${BUNDLE_DIR}/images/docling.tar" >/dev/null
-
-  # The image declares its default artifact cache via this env var.
-  local artifacts_path
-  artifacts_path=$("$RUNTIME" run --rm --entrypoint env "$DOCLING_IMAGE" 2>/dev/null \
-    | sed -n 's/^DOCLING_SERVE_ARTIFACTS_PATH=//p' | head -1)
-  [[ -n "$artifacts_path" ]] || artifacts_path="/opt/app-root/src/.cache/docling/models"
-  info "Docling artifacts path in image: ${artifacts_path}"
-
-  "$RUNTIME" rm -f llm-docling-bake >/dev/null 2>&1 || true
-  "$RUNTIME" run -d --name llm-docling-bake \
-    -p 127.0.0.1:5001:5001 \
-    -v "${BUNDLE_DIR}/docling-artifacts:${artifacts_path}" \
-    "$DOCLING_IMAGE" >/dev/null
-
-  local ok=false
-  for _ in $(seq 1 60); do
-    if curl -fsS -m 3 http://127.0.0.1:5001/health >/dev/null 2>&1; then
-      ok=true; break
-    fi
-    sleep 5
-  done
-  if [[ "$ok" != "true" ]]; then
-    "$RUNTIME" logs --tail 60 llm-docling-bake || true
-    "$RUNTIME" rm -f llm-docling-bake >/dev/null 2>&1 || true
-    die "Docling did not become healthy on the builder"
-  fi
-
-  local test_pdf="${SCRIPT_DIR}/test.pdf"
-  [[ -f "$test_pdf" ]] || die "missing ${test_pdf}"
-  local response
-  response=$(curl -fsS -m 300 -F "files=@${test_pdf}" http://127.0.0.1:5001/v1/convert/file)
-  if ! grep -q '"status": *"success"' <<<"$response"; then
-    "$RUNTIME" rm -f llm-docling-bake >/dev/null 2>&1 || true
-    die "Docling test conversion failed: ${response:0:300}"
-  fi
-  "$RUNTIME" rm -f llm-docling-bake >/dev/null 2>&1 || true
-  info "Docling artifacts: $(du -sh "${BUNDLE_DIR}/docling-artifacts" | awk '{print $1}')"
+fetch_tessdata() {
+  log "French Tesseract data"
+  mkdir -p "${BUNDLE_DIR}/tessdata"
+  fetch_url "$TESSDATA_URL" "${BUNDLE_DIR}/tessdata/fra.traineddata"
+  cp -f "${BUNDLE_DIR}/tessdata/fra.traineddata" "${BUNDLE_DIR}/tessdata/fr.traineddata"
+  info "Tesseract: fra.traineddata + fr.traineddata"
 }
 
 # ---------------------------------------------------------------------------
@@ -400,11 +354,12 @@ write_manifest() {
   [[ -f "${BUNDLE_DIR}/host/NVIDIA_DRIVER_VERSION" ]] && \
     nvidia_driver=$(cat "${BUNDLE_DIR}/host/NVIDIA_DRIVER_VERSION")
 
-  local vllm_digest litellm_digest webui_digest docling_digest cuda_digest
+  local vllm_digest litellm_digest webui_digest docling_digest pgvector_digest cuda_digest
   vllm_digest=$(image_digest "$VLLM_IMAGE")
   litellm_digest=$(image_digest "$LITELLM_IMAGE")
   webui_digest=$(image_digest "$OPEN_WEBUI_IMAGE")
   docling_digest=$(image_digest "$DOCLING_IMAGE")
+  pgvector_digest=$(image_digest "$PGVECTOR_IMAGE")
   cuda_digest=$(image_digest "$CUDA_SMOKE_IMAGE")
 
   jq -n \
@@ -417,12 +372,14 @@ write_manifest() {
     --arg webui_digest "$webui_digest" \
     --arg docling_image "$DOCLING_IMAGE" \
     --arg docling_digest "$docling_digest" \
+    --arg pgvector_image "$PGVECTOR_IMAGE" \
+    --arg pgvector_digest "$pgvector_digest" \
     --arg cuda_image "$CUDA_SMOKE_IMAGE" \
     --arg cuda_digest "$cuda_digest" \
     --arg nvidia_driver "$nvidia_driver" \
     --arg nvidia_toolkit_repo "$NVIDIA_TOOLKIT_REPO" \
     --arg lxc_template "$LXC_TEMPLATE_FILENAME" \
-    --arg cloud_image "$CLOUD_IMAGE_FILENAME" \
+    --arg tessdata_url "$TESSDATA_URL" \
     --arg target_model "$TARGET_MODEL" \
     --arg target_dir "$TARGET_MODEL_DIR" \
     --arg draft_model "$DRAFT_MODEL" \
@@ -437,13 +394,14 @@ write_manifest() {
         litellm: {reference: $litellm_image, digest: $litellm_digest},
         open_webui: {reference: $webui_image, digest: $webui_digest},
         docling: {reference: $docling_image, digest: $docling_digest},
+        pgvector: {reference: $pgvector_image, digest: $pgvector_digest},
         cuda_smoke: {reference: $cuda_image, digest: $cuda_digest}
       },
       host: {
         nvidia_driver: $nvidia_driver,
         nvidia_toolkit_repo: $nvidia_toolkit_repo,
         lxc_template: $lxc_template,
-        cloud_image: $cloud_image
+        tessdata_url: $tessdata_url
       },
       models: {
         target: {repo: $target_model, dir: $target_dir},
@@ -459,13 +417,13 @@ write_manifest() {
 # Main
 # ---------------------------------------------------------------------------
 install_tools
-mkdir -p "${BUNDLE_DIR}"/{host,images,models,repo/pool,docling-artifacts,cloudimg}
+mkdir -p "${BUNDLE_DIR}"/{host,images,models,repo/pool,tessdata}
 
 [[ "$SKIP_HOST" == "true" ]] || { fetch_nvidia_driver; fetch_nvidia_toolkit; fetch_host_images; }
 [[ "$SKIP_IMAGES" == "true" ]] || fetch_images
 [[ "$SKIP_MODELS" == "true" ]] || fetch_models
 [[ "$SKIP_APT" == "true" ]] || build_apt_repo
-[[ "$SKIP_DOCLING" == "true" ]] || bake_docling
+[[ "$SKIP_TESSDATA" == "true" ]] || fetch_tessdata
 write_manifest
 
 log "Bundle ready: ${BUNDLE_DIR}"

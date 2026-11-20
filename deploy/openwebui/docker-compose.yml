@@ -1,0 +1,68 @@
+name: openwebui
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: openwebui-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openwebui
+      POSTGRES_USER: openwebui
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.4
+    container_name: openwebui
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    environment:
+      # Application DB + vector DB in the same PostgreSQL/pgvector instance.
+      DATABASE_URL: postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      VECTOR_DB: pgvector
+      PGVECTOR_DB_URL: postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Qwen3-Embedding-0.6B is 1024-dimensional.
+      PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH: "1024"
+
+      # Chat + embeddings through LiteLLM in the inference LXC.
+      OPENAI_API_BASE_URL: ${LITELLM_BASE_URL}
+      OPENAI_API_KEY: ${LITELLM_API_KEY}
+      ENABLE_OPENAI_API: "true"
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_EMBEDDING_MODEL: qwen3-embedding-0.6b
+      RAG_OPENAI_API_BASE_URL: ${LITELLM_BASE_URL}
+      RAG_OPENAI_API_KEY: ${LITELLM_API_KEY}
+
+      # Document extraction through Docling in the inference LXC.
+      CONTENT_EXTRACTION_ENGINE: docling
+      DOCLING_SERVER_URL: ${DOCLING_SERVER_URL}
+      DOCLING_API_KEY: ${DOCLING_API_KEY}
+      DOCLING_PARAMS: ${DOCLING_PARAMS}
+
+      # Make this compose/.env the source of truth. With persistent config
+      # enabled (Open WebUI default), values saved in the DB via the Admin UI
+      # override the environment. Set to true if you prefer UI-managed config.
+      ENABLE_PERSISTENT_CONFIG: ${ENABLE_PERSISTENT_CONFIG:-false}
+
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      FORWARDED_ALLOW_IPS: "*"
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+
+volumes:
+  pgdata:
+  openwebui_data:

@@ -1,5 +1,5 @@
 ---
-- name: Configure the inference LXC (vLLM + LiteLLM + embedding)
+- name: Configure the inference LXC (vLLM + LiteLLM + Docling)
   hosts: inference_lxc
   become: true
   roles:
@@ -20,52 +20,7 @@
         msg:
           - "{{ inventory_hostname }} is ready"
           - "LiteLLM: http://{{ ansible_host }}:{{ litellm_port }}/v1"
+          - "Docling: http://{{ ansible_host }}:{{ docling_port }}"
           - "vLLM started: {{ vllm_start | bool }}"
-          - "GPU: nvidia-smi is validated by lxc_docker"
-
-- name: Configure the front VM (Open WebUI + Docling, no GPU)
-  hosts: front_vm
-  become: true
-  pre_tasks:
-    - name: Wait for cloud-init to finish its initial setup
-      ansible.builtin.wait_for:
-        path: /var/lib/cloud/instance/boot-finished
-        state: present
-        timeout: 600
-
-  roles:
-    - role: airgap
-      when: airgap_mode | default(false)
-    - system_timezone
-    - essential_packages
-    - developer_config
-    - security_hardening
-    - inference_user
-    - podman
-    - firewall
-    - role: docling
-      when: docling_enabled | default(true)
-    - role: open_webui
-      when: open_webui_enabled | default(true)
-
-  post_tasks:
-    - name: Check if a reboot is required
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: reboot_required_file
-
-    # A VM that does not survive its own reboots can turn this off: the play ends on the running kernel.
-    - name: Reboot machine to apply pending kernel updates
-      ansible.builtin.reboot:
-        msg: "Rebooting machine to apply pending kernel updates"
-      when:
-        - reboot_required_file.stat.exists
-        - system_reboot_on_kernel_update | default(true)
-
-    - name: Front VM ready
-      ansible.builtin.debug:
-        msg:
-          - "{{ inventory_hostname }} is ready"
-          - "Open WebUI: http://{{ ansible_host }}:8080"
-          - "LiteLLM backend: {{ litellm_base_url }}"
-          - "Docling: 127.0.0.1:5001 (internal)"
+          - "Docling GPU: {{ docling_gpu | bool }}"
+          - "OCR/table (Open WebUI .env): {{ docling_ocr_preset | default('tesseract') }}/{{ docling_ocr_lang | default(['fr']) | join(',') }}, TableFormer accurate"

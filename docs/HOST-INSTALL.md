@@ -1,12 +1,14 @@
-# Installation de l'hôte Proxmox et du LXC d'inférence
+# Hôte Proxmox et LXC d'inférence
 
 Ce document couvre la partie **manuelle** de l'hôte Proxmox : driver NVIDIA,
-toolkit, template LXC, hooks GPU et bind mount du bundle airgap. Le reste
-(Docker, vLLM, LiteLLM, Open WebUI, Docling) est géré par Ansible.
+toolkit, template LXC, hooks GPU, bind mount du bundle airgap.
 
 Le LXC reste **non privilégié**. Le GPU n'est pas passé en PCI/VFIO : le host
 garde le driver et le LXC reçoit les devices + les libs user-space via le hook
 NVIDIA de Proxmox.
+
+La partie front (Open WebUI + PGVector) tourne sur **ta VM Docker existante**
+via `deploy/openwebui/docker-compose.yml`. Ce repo ne crée plus de VM front.
 
 ## 1. Prérequis
 
@@ -24,7 +26,7 @@ dpkg -l lxc-pve | tail -1
 ls -l /usr/share/lxc/hooks/nvidia
 ```
 
-## 2. Driver NVIDIA (dernière version du bundle)
+## 2. Driver NVIDIA (version du bundle)
 
 Le bundle contient `host/NVIDIA-Linux-x86_64-<version>.run` et
 `host/NVIDIA_DRIVER_VERSION`.
@@ -49,7 +51,7 @@ ls -l /dev/nvidia0 /dev/nvidia-uvm
 ```
 
 > Le script prend par défaut le **dernier** driver publié. Si le DKMS échoue
-> avec le kernel Proxmox, relancez le builder avec une version connue bonne :
+> avec le kernel Proxmox, relance le builder avec une version connue bonne :
 > `NVIDIA_DRIVER_VERSION=595.104.02 ./scripts/fetch-airgap-bundle.sh`.
 > La version `595.104.02` est celle validée sur `pve-node1` (PVE 9.2.27, kernel 7.0).
 
@@ -64,22 +66,17 @@ nvidia-container-cli --version
 nvidia-ctk --version
 ```
 
-## 4. Images et templates Proxmox
+## 4. Template LXC
 
 ```bash
 cp /path/to/airgap-bundle/host/ubuntu-26.04-standard_26.04-1_amd64.tar.zst \
    /var/lib/vz/template/cache/
-cp /path/to/airgap-bundle/cloudimg/ubuntu-26.04-server-cloudimg-amd64.img \
-   /var/lib/vz/template/iso/
 ```
 
 Dans `iac/terraform.tfvars` (mode airgap) :
 
 ```hcl
-cloud_image_preuploaded        = true
 ubuntu_lxc_template_preuploaded = true
-# Le snippet Cloud-Init ne fait que démarrer qemu-guest-agent : pas besoin d'apt.
-enable_cloudinit_snippet       = true
 ```
 
 Puis, depuis le poste de pilotage :
@@ -90,8 +87,8 @@ tofu init
 tofu apply
 ```
 
-Cela crée le LXC (120 par défaut) et la VM front (112 par défaut). Le LXC
-démarre sans les hooks GPU ; l'étape suivante les ajoute.
+Cela crée **uniquement** le LXC (120 par défaut, `llm-lxc`). Pas de VM
+front, pas d'image cloud, pas de snippet cloud-init.
 
 ## 5. Hooks GPU du LXC
 
@@ -107,8 +104,8 @@ Le script :
 - arrête le LXC ;
 - active `nesting=1,keyctl=1,fuse=1,mknod=1` ;
 - détecte les majors NVIDIA réels (`/dev/nvidia0`, `/dev/nvidia-uvm`, …) et
-  ajoute les règles `lxc.cgroup2.devices.allow` correspondantes ;
-- ajoute le hook `lxc.hook.pre-start` (chargement de `nvidia_uvm`), le hook
+  ajoute les règles `lxc.cgroup2.devices.allow` ;
+- ajoute le hook `lxc.hook.pre-start` (`nvidia_uvm`), le hook
   `lxc.hook.mount` (`/usr/share/lxc/hooks/nvidia`), les variables
   `NVIDIA_VISIBLE_DEVICES=all` / `NVIDIA_DRIVER_CAPABILITIES=compute,utility` ;
 - ajoute 16 GiB de `/dev/shm` ;
@@ -127,70 +124,144 @@ pct exec 120 -- nvidia-smi -L
 ssh root@192.0.2.10 nvidia-smi -L
 ```
 
-## 6. Docker + toolkit dans le LXC (Ansible)
-
-Le rôle `lxc_docker` fait le reste :
+## 6. Ansible : LXC d'inférence
 
 ```bash
 cd ansible
 cp inventory/inventory.yml.example inventory/inventory.yml
 cp group_vars/all.yml.example group_vars/all.yml
-# Renseigner : IPs, litellm_master_key, airgap_mode: true, llm_bundle_dir,
-#              vllm_start: true (sur le host 48 Go)
 $EDITOR group_vars/all.yml
+```
+
+Renseigner au minimum :
+
+```yaml
+litellm_master_key: "<openssl rand -hex 32>"
+docling_api_key: "<openssl rand -hex 32>"
+litellm_base_url: "http://<ip-lxc>:4000/v1"
+docling_url: "http://<ip-lxc>:5001"
+
+# pve-node1 (GPU 8 Go) :
+vllm_start: false
+docling_gpu: false
+
+# Site 48 Go :
+# vllm_start: true
+# docling_gpu: true
+```
+
+Puis :
+
+```bash
 ansible-playbook playbook.yml
 ```
 
-Le rôle installe Docker et `nvidia-container-toolkit` depuis le repo local,
-force `no-cgroups = true` (obligatoire en LXC non privilégié), configure le
-runtime Docker `nvidia`, charge l'image CUDA de smoke test et exécute
-`nvidia-smi` dans un conteneur.
+Le rôle `lxc_docker` installe Docker + `nvidia-container-toolkit`, configure le
+runtime Docker `nvidia` avec `no-cgroups=true`, charge l'image CUDA de smoke
+test et exécute `nvidia-smi` dans un conteneur.
 
-Test manuel éventuel dans le LXC :
+Le rôle `inference_stack` :
+
+- télécharge `fra.traineddata` et le duplique en `fr.traineddata` dans
+  `/srv/llm/docling/tessdata/` (le preset Tesseract de Docling cherche `fr`) ;
+- déploie le compose vLLM + embedding + LiteLLM + **Docling** ;
+- avec `docling_gpu: false`, utilise l'image Docling CPU ; avec `true`,
+  l'image CUDA `docling-serve-cu130:v1.38.2` et `DOCLING_DEVICE=cuda` ;
+- expose LiteLLM `:4000` et Docling `:5001` au LAN ; vLLM reste sur
+  `127.0.0.1:8000` / réseau Docker interne ;
+- attend la santé de LiteLLM et de Docling (API key).
+
+Le Docling contient **les deux moteurs OCR** :
+- **Tesseract** (`fra`/`fr`) : CPU, 0 VRAM, rapide ;
+- **EasyOCR** (`latin_g2` inclus dans l'image) : plus robuste sur les scans
+  inversés/bruités, plus lent sur CPU et ~1-2 GB VRAM s'il utilise le GPU.
+
+Le choix se fait côté Open WebUI via `DOCLING_PARAMS` (voir
+`deploy/openwebui/README.md`). `table_mode=accurate` active TableFormer
+accurate pour les tableaux ; il tourne sur CPU **et** GPU (pas uniquement
+GPU), et c'est déjà le défaut Docling.
+
+## 7. Front : Open WebUI + PGVector sur ta VM Docker
+
+Sur ta VM existante :
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi -L
+cd deploy/openwebui
+cp .env.example .env
+$EDITOR .env
+docker compose config --quiet
+docker compose up -d
 ```
 
-## 7. Cible 48 Go : démarrer vLLM
+Renseigner `LITELLM_BASE_URL`, `LITELLM_API_KEY` (le master key),
+`DOCLING_SERVER_URL`, `DOCLING_API_KEY`, `POSTGRES_PASSWORD`,
+`WEBUI_SECRET_KEY`, et `DOCLING_PARAMS` :
 
-Sur `pve-node1` (GPU 8 Go), `vllm_start: false` : seuls LiteLLM, Open WebUI et
-Docling tournent. Sur le serveur cible (GPU 48 Go), passer à
-`vllm_start: true` puis relancer :
+```json
+{"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+```
+
+ou EasyOCR :
+
+```json
+{"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
+```
+
+Garder `ENABLE_PERSISTENT_CONFIG=false` : le `.env` gagne sur la DB/UI. Modifier
+les réglages dans `.env` puis `docker compose up -d` ; les changements faits
+dans l'UI ne survivent pas au redémarrage.
+
+Le compose inclut PostgreSQL 17 + pgvector pour la DB applicative **et** les
+vecteurs. `PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH=1024` correspond à
+Qwen3-Embedding-0.6B. Voir `deploy/openwebui/README.md` pour les backups,
+l'airgap et le dépannage.
+
+## 8. Cible 48 Go
+
+Sur le serveur cible (GPU 48 Go) :
+
+```yaml
+vllm_start: true
+docling_gpu: true
+```
+
+Puis :
 
 ```bash
 ansible-playbook playbook.yml --limit inference_lxc
 ```
 
-Le rôle `inference_stack` charge les images vLLM/LiteLLM du bundle et démarre
-la stack. Le premier démarrage charge `unsloth/Qwen3.8-27B-NVFP4` + le drafter
-DFlash2 ; suivre :
+Le profil :
+- vLLM chat `--gpu-memory-utilization 0.78` quand Docling GPU est actif
+  (0.82 sinon), embedding `0.06` ;
+- Docling GPU layout/table ~4-5 GB, OCR Tesseract CPU 0 VRAM (EasyOCR ~1-2 GB
+  s'il est sélectionné) ;
+- marge ~7.7 GB sur 48 Go.
+
+Premier démarrage vLLM (chargement des poids) :
 
 ```bash
-docker ps
 docker logs -f vllm
 curl -s http://127.0.0.1:8000/v1/models
 ```
 
-Puis depuis le LAN :
+Vérifier le rendu Docling et l'OCR dans les logs :
 
 ```bash
-curl -s -H "Authorization: Bearer $LITELLM_KEY" \
-  http://192.0.2.10:4000/v1/models
+docker logs -f docling
+docker exec docling tesseract --list-langs   # eng, fr, fra, osd
 ```
 
-Points de vigilance sur la 48 Go :
-
-- `--gpu-memory-utilization 0.82` (chat) + `0.06` (embedding) ;
+Points de vigilance :
 - `--kv-cache-dtype nvfp4`, `--attention-backend flash_attn`,
   `--speculative-config '{"method":"dflash",...,"num_speculative_tokens":7}'` ;
-- `num_speculative_tokens = block_size - 1` du drafter (bloc 8 → 7) ;
 - si le décode NVFP4/DFlash sm120 plante, passer `vllm_enforce_eager: true` ;
 - si `--reasoning-parser qwen3` / `--tool-call-parser qwen3_coder` n'existent
   pas dans l'image vLLM, les vider dans `all.yml` ;
-- ne jamais exposer vLLM (8000) sur le LAN : seul LiteLLM (4000) est publié.
+- ne jamais exposer vLLM (8000) sur le LAN : seuls LiteLLM (4000) et Docling
+  (5001) sont publiés, protégés par leurs clés.
 
-## 8. Notes de sécurité
+## 9. Notes de sécurité
 
 - LXC non privilégié, `nesting/keyctl/fuse/mknod` pour Docker, hook NVIDIA.
 - Les devices NVIDIA sont en `0666` (défaut du driver) ; l'autorisation réelle
@@ -199,6 +270,6 @@ Points de vigilance sur la 48 Go :
   dans un LXC non privilégié sans mapping des GID `video`/`render`.
 - `nvidia-container-cli` tourne avec `--no-cgroups` : le cgroup est géré par le
   parent LXC, pas par le toolkit.
-- LiteLLM porte la seule clé d'API LAN ; le master key est dans
-  `group_vars/all.yml` (gitignoré) et dans `/srv/llm/litellm/litellm.env` (0600)
-  sur le LXC.
+- LiteLLM et Docling portent chacun une clé API ; vLLM n'est pas exposé.
+- Docling `DOCLING_SERVE_API_KEY` et LiteLLM `litellm_master_key` sont dans
+  `group_vars/all.yml` (gitignoré) et dans `/srv/llm/...` (0600 pour LiteLLM).

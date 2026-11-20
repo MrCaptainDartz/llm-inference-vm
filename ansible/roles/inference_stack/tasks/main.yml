@@ -9,6 +9,16 @@
       litellm_master_key must be set to a strong value in group_vars/all.yml
       (openssl rand -hex 32).
 
+- name: Assert that a Docling API key is configured
+  ansible.builtin.assert:
+    that:
+      - docling_api_key is defined
+      - docling_api_key | length >= 16
+      - docling_api_key is not search('change-me|CHANGE-ME')
+    fail_msg: >-
+      docling_api_key must be set to a strong value in group_vars/all.yml
+      (openssl rand -hex 32); the Open WebUI compose uses the same value.
+
 - name: Create the inference stack directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -21,6 +31,37 @@
     - "{{ inference_stack_compose_dir }}"
     - "{{ inference_stack_litellm_dir }}"
     - "{{ inference_stack_hf_cache_dir }}"
+    - "{{ docling_tessdata_dir }}"
+
+# Docling's Tesseract preset looks for fr.traineddata (ISO), while Tesseract
+# names the French model fra.traineddata. Provide both local files.
+- name: Download the French Tesseract data (online)
+  ansible.builtin.get_url:
+    url: "{{ docling_tessdata_url }}"
+    dest: "{{ docling_tessdata_dir }}/fra.traineddata"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not (docling_offline | bool)
+
+- name: Copy the bundled French Tesseract data (airgap)
+  ansible.builtin.copy:
+    src: "{{ docling_bundle_dir }}/tessdata/fra.traineddata"
+    dest: "{{ docling_tessdata_dir }}/fra.traineddata"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  when: docling_offline | bool
+
+- name: Provide the ISO-named Tesseract data expected by Docling
+  ansible.builtin.copy:
+    src: "{{ docling_tessdata_dir }}/fra.traineddata"
+    dest: "{{ docling_tessdata_dir }}/fr.traineddata"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
 
 - name: Deploy the Docker Compose stack
   ansible.builtin.template:
@@ -60,6 +101,12 @@
     - vllm_offline | bool
     - vllm_start | bool
 
+- name: Load the Docling image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "docker load -i {{ vllm_bundle_dir }}/images/docling.tar"
+  changed_when: false
+  when: docling_offline | bool
+
 - name: Validate the Docker Compose configuration
   ansible.builtin.command:
     cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml config --quiet"
@@ -69,7 +116,7 @@
   ansible.builtin.set_fact:
     inference_stack_up_command: >-
       docker compose -f {{ inference_stack_compose_dir }}/compose.yaml up -d
-      {{ 'litellm' if not (vllm_start | bool) else '' }}
+      {{ 'litellm docling' if not (vllm_start | bool) else '' }}
       {{ '--pull never' if (vllm_offline | bool) else '' }}
 
 - name: Start the inference stack
@@ -95,12 +142,32 @@
   delay: 2
   changed_when: false
 
+- name: Wait for the Docling port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ docling_port }}"
+    delay: 2
+    timeout: 120
+
+- name: Wait for Docling to answer (API key protected)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ docling_port }}/health"
+    status_code: 200
+    timeout: 5
+    headers:
+      X-Api-Key: "{{ docling_api_key }}"
+  register: inference_stack_docling_health
+  until: inference_stack_docling_health.status | default(0) == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
 - name: Show the inference endpoints
   ansible.builtin.debug:
     msg:
       - "LiteLLM (LAN): http://{{ ansible_host }}:{{ litellm_port }}/v1"
+      - "Docling (LAN): http://{{ ansible_host }}:{{ docling_port }}"
       - "vLLM debug (LXC localhost only): http://127.0.0.1:8000/v1"
       - "vLLM started: {{ vllm_start | bool }}"
-      - >-
-        {{ 'vLLM embedding: http://vllm-embedding:' ~ vllm_embedding_port ~ '/v1'
-           if (vllm_embedding_enabled | bool) else 'vLLM embedding: disabled' }}
+      - "Docling GPU: {{ docling_gpu | bool }}"
+      - "OCR/table (Open WebUI .env): {{ docling_ocr_preset | default('tesseract') }}/{{ docling_ocr_lang | default(['fr']) | join(',') }}, TableFormer accurate"

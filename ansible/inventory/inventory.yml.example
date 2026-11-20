@@ -7,12 +7,6 @@ all:
           # IP assigned by OpenTofu (iac/outputs.tf -> lxc_ip)
           ansible_host: 192.0.2.10
           ansible_user: root
-    front_vm:
-      hosts:
-        llm-webui:
-          # IP assigned by OpenTofu (iac/outputs.tf -> front_vm_ip)
-          ansible_host: 192.0.2.11
-          ansible_user: ubuntu
     bundle_builder:
       hosts:
         bundle-builder:

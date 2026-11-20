@@ -2,7 +2,7 @@
 
 variable "proxmox_api_url" {
   type        = string
-  description = "URL of the Proxmox API (e.g., https://10.0.0.1:8006/api2/json)"
+  description = "URL of the Proxmox API (e.g., https://192.0.2.1:8006/api2/json)"
 }
 
 variable "proxmox_api_token" {
@@ -23,136 +23,178 @@ variable "proxmox_insecure" {
   default     = true
 }
 
-# --- Cloud-Init Image ---
-
-variable "ubuntu_cloud_image_url" {
-  type        = string
-  description = "URL of the Ubuntu Cloud-Init image to download on the Proxmox node"
-  default     = "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
-}
-
-variable "ubuntu_cloud_image_filename" {
-  type        = string
-  description = "Filename used to store the Cloud-Init image on Proxmox"
-  default     = "ubuntu-26.04-server-cloudimg-amd64.img"
-}
-
-variable "image_datastore_id" {
-  type        = string
-  description = "Proxmox datastore where the Cloud-Init ISO image is stored (must be a directory-type datastore)"
-  default     = "local"
-}
-
-variable "cloud_image_preuploaded" {
-  type        = bool
-  description = "Airgapped Proxmox: skip the image download and use the Cloud-Init image already uploaded to the node datastore (from the bundle's cloudimg/). The file must exist as <image_datastore_id>:iso/<ubuntu_cloud_image_filename>."
-  default     = false
-}
-
-variable "enable_cloudinit_snippet" {
-  type        = bool
-  description = "Whether to upload and use a custom Cloud-Init snippet to start qemu-guest-agent on first boot (no apt packages: installed from bundle by Ansible)"
-  default     = true
-}
-
-variable "snippet_datastore_id" {
-  type        = string
-  description = "Proxmox datastore where Cloud-Init snippets are stored (if enable_cloudinit_snippet is true). Defaults to image_datastore_id."
-  default     = null
-}
-
-# --- VM Identity ---
-
-variable "vm_name" {
-  type        = string
-  description = "Name of the LLM inference VM in Proxmox"
-  default     = "vm-llm-inference"
-}
+# --- Proxmox node / storage ---
 
 variable "vm_node_name" {
   type        = string
-  description = "Proxmox node on which the VM is created (e.g., pve-node1). No default: node placement is deployment-specific and belongs in terraform.tfvars."
-}
-
-variable "vm_id" {
-  type        = number
-  description = "Proxmox VM ID (Proxmox auto-assigns the next free ID if null)"
-  default     = null
-}
-
-variable "vm_description" {
-  type        = string
-  description = "Description of the VM in Proxmox"
-  default     = "Managed by OpenTofu - LLM Inference VM (vLLM / Open WebUI / RAG)"
-}
-
-variable "vm_tags" {
-  type        = list(string)
-  description = "Proxmox tags applied to the VM"
-  default     = ["llm-inference", "opentofu"]
-}
-
-# --- VM Resources ---
-
-variable "cpu_cores" {
-  type        = number
-  description = "Number of virtual CPU cores"
-  default     = 8
-}
-
-variable "cpu_type" {
-  type        = string
-  description = "CPU type exposed to the guest. 'host' is recommended for GPU passthrough (no feature-emulation overhead)."
-  default     = "host"
-}
-
-variable "memory_mb" {
-  type        = number
-  description = "Memory in MiB. SGLang GPU inference benefits from >= 16384."
-  default     = 16384
-}
-
-variable "efi_pre_enrolled_keys" {
-  type        = bool
-  description = "Enroll Microsoft keys in the OVMF firmware (Secure Boot active). MUST be false for GPU VMs: DKMS-built NVIDIA open kernel modules are unsigned and Secure Boot would refuse to load them. In-place update of the efi_disk (takes effect at next VM boot)."
-  default     = true
-}
-
-variable "disk_size_gb" {
-  type        = number
-  description = "Boot disk size in GiB. The airgap bundle alone (~50-60 GiB) plus models and container storage warrants 200 GiB."
-  default     = 200
+  description = "Proxmox node on which the LXC and the front VM are created"
 }
 
 variable "disk_datastore_id" {
   type        = string
-  description = "Proxmox datastore for the boot disk"
-  default     = "local-lvm"
+  description = "Datastore for the LXC rootfs and the front VM boot disk"
+  default     = "local-zfs"
 }
 
-# --- VM Hardware Options ---
+variable "image_datastore_id" {
+  type        = string
+  description = "Directory-type datastore for the Ubuntu cloud image (must support ISO content)"
+  default     = "local"
+}
+
+variable "template_datastore_id" {
+  type        = string
+  description = "Directory-type datastore for the Ubuntu LXC template (must support vztmpl content)"
+  default     = "local"
+}
+
+variable "snippet_datastore_id" {
+  type        = string
+  description = "Datastore for the Cloud-Init vendor snippet (defaults to image_datastore_id)"
+  default     = null
+}
+
+# --- LXC: inference (vLLM + LiteLLM) ---
+
+variable "lxc_id" {
+  type        = number
+  description = "Proxmox VMID for the inference LXC"
+  default     = 120
+}
+
+variable "lxc_name" {
+  type        = string
+  description = "Hostname of the inference LXC"
+  default     = "llm-lxc"
+}
+
+variable "lxc_description" {
+  type        = string
+  description = "Description of the inference LXC in Proxmox"
+  default     = "Managed by OpenTofu - LLM inference LXC (vLLM + LiteLLM, GPU via Proxmox NVIDIA hook)"
+}
+
+variable "lxc_tags" {
+  type        = list(string)
+  description = "Proxmox tags applied to the inference LXC"
+  default     = ["llm-lxc", "vllm", "opentofu"]
+}
+
+variable "lxc_cores" {
+  type        = number
+  description = "CPU cores allocated to the inference LXC"
+  default     = 8
+}
+
+variable "lxc_memory_mb" {
+  type        = number
+  description = "Memory limit of the inference LXC in MiB. vLLM loads the model weights through CPU RAM."
+  default     = 32768
+}
+
+variable "lxc_swap_mb" {
+  type        = number
+  description = "Swap for the inference LXC in MiB (0 = disabled)"
+  default     = 0
+}
+
+variable "lxc_disk_size_gb" {
+  type        = number
+  description = "Rootfs size of the inference LXC in GiB (models, container images, HF cache)"
+  default     = 150
+}
+
+variable "lxc_unprivileged" {
+  type        = bool
+  description = "Create an unprivileged LXC (recommended). GPU access uses the Proxmox NVIDIA hook."
+  default     = true
+}
+
+variable "lxc_enable_nesting" {
+  type        = bool
+  description = "Allow Docker inside the LXC (features: nesting=1)"
+  default     = true
+}
+
+# --- Front VM: Open WebUI + Docling ---
+
+variable "front_vm_id" {
+  type        = number
+  description = "Proxmox VMID for the front VM. The old VM 103 is destroyed when this changes."
+  default     = 112
+}
+
+variable "front_vm_name" {
+  type        = string
+  description = "Name of the front VM"
+  default     = "llm-webui"
+}
+
+variable "front_vm_description" {
+  type        = string
+  description = "Description of the front VM in Proxmox"
+  default     = "Managed by OpenTofu - LLM front VM (Open WebUI + Docling)"
+}
+
+variable "front_vm_tags" {
+  type        = list(string)
+  description = "Proxmox tags applied to the front VM"
+  default     = ["llm-webui", "open-webui", "opentofu"]
+}
+
+variable "front_vm_cores" {
+  type        = number
+  description = "CPU cores allocated to the front VM"
+  default     = 4
+}
+
+variable "front_vm_memory_mb" {
+  type        = number
+  description = "Memory of the front VM in MiB"
+  default     = 8192
+}
+
+variable "front_vm_disk_size_gb" {
+  type        = number
+  description = "Boot disk size of the front VM in GiB"
+  default     = 80
+}
+
+variable "front_vm_user" {
+  type        = string
+  description = "Cloud-Init SSH user for the front VM"
+  default     = "ubuntu"
+}
+
+# --- Front VM hardware ---
+
+variable "cpu_type" {
+  type        = string
+  description = "CPU type exposed to the front VM"
+  default     = "host"
+}
 
 variable "machine_type" {
   type        = string
-  description = "Machine type: 'q35' (PCIe/UEFI, required for GPU passthrough) or 'pc'"
+  description = "Machine type of the front VM (q35 for UEFI)"
   default     = "q35"
 }
 
 variable "bios" {
   type        = string
-  description = "BIOS type: 'ovmf' (UEFI) or 'seabios'"
+  description = "BIOS type of the front VM ('ovmf' or 'seabios')"
   default     = "ovmf"
 }
 
 variable "vga_type" {
   type        = string
-  description = "VGA type: 'virtio', 'qxl' (SPICE), 'std', 'serial0', 'none'"
+  description = "VGA type of the front VM"
   default     = "virtio"
 }
 
 variable "keyboard_layout" {
   type        = string
-  description = "Keyboard layout: 'fr', 'en-us', etc."
+  description = "Keyboard layout of the front VM"
   default     = "fr"
 }
 
@@ -164,64 +206,114 @@ variable "rng_source" {
 
 variable "start_on_boot" {
   type        = bool
-  description = "Start the VM automatically when the Proxmox node boots"
+  description = "Start the LXC and the front VM automatically when the Proxmox node boots"
   default     = true
 }
 
-# --- VM Network ---
-
-variable "network_interfaces" {
-  type = list(object({
-    bridge      = string
-    address     = string
-    gateway     = optional(string)
-    vlan_id     = optional(number)
-    mac_address = optional(string)
-    firewall    = optional(bool, true)
-    model       = optional(string, "virtio")
-  }))
-  description = "Network interfaces. 'bridge' and 'address' (CIDR) are mandatory. No default: the target topology is deployment-specific and belongs in terraform.tfvars."
+variable "efi_pre_enrolled_keys" {
+  type        = bool
+  description = "Enroll Microsoft keys in the front VM OVMF firmware (Secure Boot). false keeps the firmware permissive; the front VM has no GPU."
+  default     = false
 }
 
-# --- GPU / PCI Passthrough ---
+# --- Network ---
 
-variable "pci_devices" {
-  type = list(object({
-    device   = optional(string)
-    id       = optional(string)
-    mapping  = optional(string)
-    pcie     = optional(bool, true)
-    rombar   = optional(bool, true)
-    xvga     = optional(bool, false)
-    mdev     = optional(string)
-    rom_file = optional(string)
-  }))
-  description = "PCI devices to passthrough (e.g., NVIDIA GPU). Either Proxmox cluster 'mapping', or direct PCI 'id' (omit the .X suffix to passthrough all functions, e.g., '0000:01:00'). Defaults to none (CPU-only VM)."
-  default     = []
-}
-
-# --- Cloud-Init / Access ---
-
-variable "vm_user" {
+variable "network_bridge" {
   type        = string
-  description = "Default SSH user for the VM (injected via Cloud-Init)"
-  default     = "ubuntu"
+  description = "Proxmox bridge for the LXC and the front VM (e.g. vmbr0)"
+  default     = "vmbr0"
 }
 
-variable "ssh_public_key" {
+variable "network_gateway" {
   type        = string
-  description = "SSH public key to inject into the VM via Cloud-Init"
-  sensitive   = true
+  description = "IPv4 gateway for the LXC and the front VM"
+  default     = null
+}
+
+variable "network_vlan_id" {
+  type        = number
+  description = "Optional VLAN tag applied to both network interfaces (null = bridge native VLAN)"
+  default     = null
+}
+
+variable "network_firewall" {
+  type        = bool
+  description = "Enable the Proxmox firewall on the LXC and front VM NICs"
+  default     = true
+}
+
+variable "lxc_ipv4" {
+  type        = string
+  description = "Static IPv4 address of the inference LXC in CIDR form (e.g. 192.0.2.10/24)"
+  default     = "192.0.2.10/24"
+}
+
+variable "front_vm_ipv4" {
+  type        = string
+  description = "Static IPv4 address of the front VM in CIDR form (e.g. 192.0.2.11/24)"
+  default     = "192.0.2.11/24"
 }
 
 variable "dns_servers" {
   type        = list(string)
-  description = "DNS servers to configure in the VM via Cloud-Init"
+  description = "DNS servers configured in the LXC and the front VM"
   default     = ["9.9.9.9", "1.1.1.1"]
 }
 
 variable "dns_domain" {
   type        = string
-  description = "DNS search domain ('.' indicates no search domain in Proxmox)"
+  description = "DNS search domain ('.' means no search domain in Proxmox)"
   default     = "."
+}
+
+# --- Images / templates ---
+
+variable "ubuntu_cloud_image_url" {
+  type        = string
+  description = "URL of the Ubuntu Cloud-Init image used by the front VM"
+  default     = "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
+}
+
+variable "ubuntu_cloud_image_filename" {
+  type        = string
+  description = "Filename of the Ubuntu Cloud-Init image on Proxmox"
+  default     = "ubuntu-26.04-server-cloudimg-amd64.img"
+}
+
+variable "cloud_image_preuploaded" {
+  type        = bool
+  description = "Airgapped Proxmox: skip the cloud image download and use the image already present in <image_datastore_id>:iso/<ubuntu_cloud_image_filename>."
+  default     = false
+}
+
+variable "ubuntu_lxc_template_url" {
+  type        = string
+  description = "URL of the Ubuntu 26.04 LXC template"
+  default     = "http://download.proxmox.com/images/system/ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+}
+
+variable "ubuntu_lxc_template_filename" {
+  type        = string
+  description = "Filename of the Ubuntu 26.04 LXC template on Proxmox"
+  default     = "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+}
+
+variable "ubuntu_lxc_template_preuploaded" {
+  type        = bool
+  description = "Airgapped Proxmox: use an existing <template_datastore_id>:vztmpl/<ubuntu_lxc_template_filename> instead of downloading it."
+  default     = false
+}
+
+variable "enable_cloudinit_snippet" {
+  type        = bool
+  description = "Upload and use a Cloud-Init vendor snippet to start qemu-guest-agent on the front VM first boot (no apt packages)."
+  default     = true
+}
+
+# --- Access ---
+
+variable "ssh_public_key" {
+  type        = string
+  description = "SSH public key injected into the LXC (root) and the front VM (cloud-init user)"
+  sensitive   = true
 }

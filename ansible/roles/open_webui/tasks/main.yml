@@ -1,5 +1,5 @@
 ---
-# Deploys Open WebUI, wired to Docling (extraction) and SGLang (chat/embeddings).
+# Deploys Open WebUI, wired to Docling (extraction) and LiteLLM (chat/embeddings).
 
 - name: Create the Quadlet directory for the inference user
   ansible.builtin.file:

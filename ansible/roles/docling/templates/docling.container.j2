@@ -16,6 +16,10 @@ PublishPort=127.0.0.1:{{ docling_port }}:{{ docling_port }}
 {% for key, value in docling_env.items() %}
 Environment={{ key }}={{ value }}
 {% endfor %}
+{% if docling_offline | default(false) %}
+# Airgap: use the pre-baked artifacts copied from the bundle into /app/data.
+Environment=DOCLING_SERVE_ARTIFACTS_PATH=/app/data
+{% endif %}
 
 [Service]
 # First start pulls OCR/layout models.

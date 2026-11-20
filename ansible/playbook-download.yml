@@ -2,5 +2,8 @@
 - name: Build the offline bundle on an internet-connected Ubuntu 26.04 host
   hosts: bundle_builder
   become: true
-  roles:
-    - bundle_download
+  tasks:
+    - name: Run the airgap bundle fetcher
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/fetch-airgap-bundle.sh --output {{ playbook_dir }}/../airgap-bundle"
+        chdir: "{{ playbook_dir }}/.."

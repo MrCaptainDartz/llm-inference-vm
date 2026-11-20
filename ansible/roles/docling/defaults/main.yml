@@ -1,7 +1,7 @@
 ---
 docling_user: "{{ inference_user | default('inference') }}"
 
-# CPU or CUDA image; cu130 aligns with the sglang CUDA 13 stack (one driver).
+# CPU or CUDA image; cu130 aligns with the vLLM CUDA 13 stack (one driver).
 docling_gpu: false
 docling_image: "{{ 'quay.io/docling-project/docling-serve-cu130:latest' if docling_gpu else 'quay.io/docling-project/docling-serve:latest' }}"
 
@@ -9,10 +9,11 @@ docling_image: "{{ 'quay.io/docling-project/docling-serve-cu130:latest' if docli
 docling_port: 5001
 
 # docling-serve settings (see https://docs.openwebui.com — Docling Document Extraction).
-# DOCLING_SERVE_ARTIFACTS_PATH matches the /app/data volume (airgap: baked weights, online: downloads).
+# DOCLING_SERVE_ARTIFACTS_PATH is set only in airgap mode (pre-baked artifacts in
+# /app/data). Online, leave it unset so Docling downloads RapidOCR/layout/table
+# models itself; setting it with an empty volume makes startup fail.
 # UVICORN_WORKERS must stay at 1: more workers break the in-memory task store.
 docling_env:
-  DOCLING_SERVE_ARTIFACTS_PATH: "/app/data"
   DOCLING_SERVE_ENABLE_UI: "true"
   DOCLING_SERVE_MAX_SYNC_WAIT: "600"
   DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"

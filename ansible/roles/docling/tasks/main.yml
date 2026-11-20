@@ -1,13 +1,13 @@
 ---
 # Deploys docling-serve (RAG parsing) as a Quadlet-managed rootless container.
 
-- name: Assert the GPU host role is enabled when GPU access is requested
+- name: Assert Docling runs CPU-only on the front VM
   ansible.builtin.assert:
     that:
-      - not (docling_gpu | default(false)) or (nvidia_enabled | default(false))
+      - not (docling_gpu | default(false))
     fail_msg: >-
-      docling_gpu is true but nvidia_enabled is false: enable the nvidia role,
-      or set docling_gpu to false for a CPU deployment.
+      docling_gpu must stay false: the front VM has no GPU. GPU inference runs
+      in the inference LXC (vLLM), not in the front VM.
 
 - name: Create the Quadlet directory for the inference user
   ansible.builtin.file:

@@ -1,7 +1,0 @@
----
-
-- name: Regenerate NVIDIA CDI specification
-  ansible.builtin.systemd_service:
-    name: nvidia-cdi-generator.service
-    state: restarted
-    daemon_reload: true

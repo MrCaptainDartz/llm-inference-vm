@@ -1,2 +1,4 @@
 ---
 system_timezone_value: "Etc/UTC"
+# The Proxmox host owns the clock for unprivileged LXCs; disable NTP there.
+system_timezone_manage_ntp: true

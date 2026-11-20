@@ -1,0 +1,32 @@
+---
+lxc_base_packages:
+  - python3
+  - sudo
+  - openssh-server
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - vim
+  - git
+  - htop
+  - rsync
+  - less
+  - unzip
+  - zstd
+  - acl
+  - iproute2
+  - net-tools
+  - lsof
+  - tcpdump
+  - nmap
+  - socat
+  - tmux
+  - tree
+  - procps
+  - pciutils
+
+# The LXC is an appliance: root keeps key-only SSH for Ansible/ops.
+lxc_base_ssh_permit_root_login: "prohibit-password"
+lxc_base_ssh_password_authentication: "no"
+lxc_base_ssh_allow_tcp_forwarding: "{{ 'yes' if (ssh_allow_tcp_forwarding | default(false)) else 'no' }}"

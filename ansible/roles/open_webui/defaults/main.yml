@@ -4,12 +4,13 @@ open_webui_user: "{{ inference_user | default('inference') }}"
 open_webui_image: "ghcr.io/open-webui/open-webui:main"
 open_webui_port: 8080
 
-# Point Open WebUI at the SGLang OpenAI-compatible API when the role is enabled.
-open_webui_connect_sglang: "{{ sglang_enabled | default(false) }}"
-
-# Point Open WebUI RAG embeddings at the SGLang embedding server when enabled.
-# The embedding container only exists when the sglang role itself runs.
-open_webui_connect_sglang_embedding: "{{ (sglang_enabled | default(false)) and (sglang_embedding_enabled | default(false)) }}"
+# LiteLLM is the only API exposed by the inference LXC; Open WebUI never
+# talks to vLLM directly.
+open_webui_connect_litellm: true
+open_webui_litellm_base_url: "{{ litellm_base_url | default('http://192.0.2.10:4000/v1') }}"
+open_webui_litellm_api_key: "{{ litellm_master_key | default('litellm') }}"
+open_webui_connect_litellm_embedding: true
+open_webui_embedding_model: "{{ vllm_embedding_served_model_name | default('qwen3-embedding-0.6b') }}"
 
 # Extra environment for the container (see https://docs.openwebui.com/getting-started/env-configuration).
 open_webui_env: {}

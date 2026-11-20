@@ -1,61 +1,73 @@
 ---
 # Copy to 'all.yml' (gitignored — may hold environment-specific or sensitive values) and fill in your values.
 
-# --- Inference services account (non-admin): rootless Podman + LLM/RAG services. ---
+# --- Inference services account (non-admin) ---
 inference_user: "inference"
-
-# Extra SSH public keys for the inference user (admin keys are always copied too)
 inference_ssh_keys: []
 #   - "ssh-ed25519 AAAAC3... deploy-key"
 
-# --- SSH hardening (security_hardening role) ---
-# TCP forwarding through SSH (leave false unless you need tunnels)
+# --- SSH hardening (front VM) ---
 ssh_allow_tcp_forwarding: false
-
-# Add the playbook host's IP (and any bastion) so fail2ban never bans the machine running the playbooks.
 security_hardening_fail2ban_ignoreip: "127.0.0.1/8 ::1"
 
-# --- System (base OS) ---
+# --- System ---
 system_timezone_value: "Europe/Paris"
-essential_packages_extra: []
-#   - pciutils            # useful to inspect a passthrough GPU (lspci)
-
-# Reboot at the end of the play when a kernel update is pending
 system_reboot_on_kernel_update: true
 
-# --- LLM services (rootless Podman, Quadlet-managed, user "inference") ---
-# All run as systemd user units on the shared Podman network "llm".
+# --- LiteLLM proxy (master key, no database) ---
+# Generate with: openssl rand -hex 32
+litellm_master_key: "CHANGE-ME-openssl-rand-hex-32"
+litellm_port: 4000
+litellm_image: "ghcr.io/berriai/litellm:main-stable"
+# Front VM -> inference LXC. Keep in sync with iac/terraform.tfvars (lxc_ipv4).
+litellm_base_url: "http://192.0.2.10:4000/v1"
 
-# NVIDIA headless driver, container toolkit and CDI spec for rootless Podman GPU access.
-# Pin the driver instead of auto-detection: nvidia_driver_package: "nvidia-headless-580-server-open"
-nvidia_enabled: false
+# --- Inference LXC: vLLM chat ---
+vllm_image: "vllm/vllm-openai:v0.34.0"
+vllm_served_model_name: "qwen3.8-27b"
+# Online: Hugging Face repo. Airgap: bundle directory under /models.
+vllm_model_path: "{{ '/models/qwen3.8-27b-nvfp4' if (airgap_mode | default(false)) else 'unsloth/Qwen3.8-27B-NVFP4' }}"
+vllm_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode | default(false)) else 'maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal' }}"
+# DFlash2 draft: num_speculative_tokens = block_size - 1 (drafter block_size = 8).
+vllm_speculative_method: "dflash"
+vllm_speculative_num_tokens: 7
+vllm_gpu_memory_utilization: 0.82
+vllm_max_model_len: 262144
+vllm_kv_cache_dtype: "nvfp4"
+vllm_attention_backend: "flash_attn"
+vllm_max_num_seqs: 4
+vllm_max_num_batched_tokens: 32768
+# sm120/NVFP4 known workaround: set true if CUDA illegal instruction during decode.
+vllm_enforce_eager: false
+vllm_reasoning_parser: "qwen3"
+vllm_tool_call_parser: "qwen3_coder"
+vllm_enable_auto_tool_choice: true
+# Start the vLLM services. Keep false on a host without the 48 GB GPU (pve-node1).
+vllm_start: true
+vllm_hf_token: ""
 
-# SGLang inference engine (OpenAI API :30000 on the LAN); requires nvidia_enabled.
-# Model paths default to HF repos online and /models/<bundle dir> in airgap mode.
-sglang_enabled: false
-# Role defaults carry the RTX PRO 5000 48 GB profile; override below to change it.
-sglang_served_model_name: "qwen3.8-27b"
-# sglang_model_path: "unsloth/Qwen3.8-27B-NVFP4"
-# sglang_draft_model_path: "maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal"
-# sglang_extra_args: []              # override the profile from the role
-# sglang_api_key: "change-me"        # bearer token for :30000 (tools pass it as OPENAI_API_KEY)
+# --- Inference LXC: vLLM embedding (RAG, exposed through LiteLLM) ---
+vllm_embedding_enabled: true
+vllm_embedding_model_path: "{{ '/models/qwen3-embedding-0.6b' if (airgap_mode | default(false)) else 'Qwen/Qwen3-Embedding-0.6B' }}"
+vllm_embedding_served_model_name: "qwen3-embedding-0.6b"
+vllm_embedding_gpu_memory_utilization: 0.06
+vllm_embedding_max_model_len: 32768
+vllm_embedding_port: 8001
 
-# RAG embeddings: second SGLang container on the same GPU (debug 127.0.0.1:30001).
-sglang_embedding_enabled: true
+# --- Docker GPU smoke test (nvidia-smi only, no model load) ---
+docker_gpu_smoke_test: true
+docker_gpu_smoke_image: "nvidia/cuda:13.0.0-base-ubuntu24.04"
 
-# Docling (RAG parsing); the GPU (-cu130) image shares the CDI devices with SGLang.
-# docling_gpu: true drops the SGLang static pool to 0.78 automatically (needs ~5 GB free VRAM).
+# --- Front VM: Open WebUI + Docling ---
 docling_enabled: true
 docling_gpu: false
-
-# Open WebUI (chat + RAG, port 8080 exposed to the LAN; auto-connects to SGLang and Docling when enabled).
 open_webui_enabled: true
+open_webui_connect_litellm: true
+open_webui_embedding_model: "qwen3-embedding-0.6b"
 
 # --- Airgap deployment ---
-# 1. Build on the bundle_builder (Ubuntu 26.04 amd64, fresh cloud image instance): playbook-download.yml
-# 2. Transfer airgap-bundle/ to the VM at llm_bundle_dir (rsync/scp).
+# 1. Build on bundle_builder: scripts/fetch-airgap-bundle.sh (or playbook-download.yml)
+# 2. Mount/transfer the bundle at llm_bundle_dir.
 # 3. Set airgap_mode: true and run playbook.yml.
-# Model paths, unattended-upgrades and OFFLINE_MODE/HF_HUB_OFFLINE follow airgap_mode automatically.
-# Also set in iac/terraform.tfvars: enable_cloudinit_snippet = false, cloud_image_preuploaded = true.
 # airgap_mode: true
 # llm_bundle_dir: /airgap-bundle

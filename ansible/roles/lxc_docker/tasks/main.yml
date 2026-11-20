@@ -1,0 +1,137 @@
+---
+# Docker (rootful) inside the unprivileged LXC, with the GPU exposed by the
+# Proxmox NVIDIA hook. The hook and cgroup devices are configured on the host
+# by scripts/proxmox-lxc-gpu.sh (docs/HOST-INSTALL.md).
+
+- name: Check the NVIDIA device nodes exposed by the Proxmox hook
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /dev/nvidia0
+    - /dev/nvidiactl
+    - /dev/nvidia-uvm
+  register: lxc_docker_gpu_devices
+
+- name: Assert the GPU is visible inside the LXC
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      {{ item.item }} is missing. The Proxmox NVIDIA hook is not configured for
+      this LXC: run scripts/proxmox-lxc-gpu.sh <CTID> on the Proxmox host, then
+      restart the LXC (see docs/HOST-INSTALL.md).
+  loop: "{{ lxc_docker_gpu_devices.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify nvidia-smi works inside the LXC
+  ansible.builtin.command:
+    cmd: nvidia-smi -L
+  register: lxc_docker_nvidia_smi
+  changed_when: false
+
+- name: Install Docker and compose
+  ansible.builtin.apt:
+    name: "{{ lxc_docker_packages }}"
+    state: present
+    update_cache: true
+
+- name: Create the NVIDIA container toolkit keyring directory
+  ansible.builtin.file:
+    path: "{{ lxc_docker_nvidia_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not (lxc_docker_offline | bool)
+
+- name: Add the NVIDIA container toolkit signing key
+  ansible.builtin.get_url:
+    url: "{{ lxc_docker_nvidia_key_url }}"
+    dest: "{{ lxc_docker_nvidia_keyring }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not (lxc_docker_offline | bool)
+
+- name: Add the NVIDIA container toolkit repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.sources
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Types: deb
+      URIs: {{ lxc_docker_nvidia_repo_uri }}
+      Suites: /
+      Components:
+      Signed-By: {{ lxc_docker_nvidia_keyring }}
+  when: not (lxc_docker_offline | bool)
+
+- name: Refresh apt after adding the NVIDIA repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: not (lxc_docker_offline | bool)
+
+- name: Install the NVIDIA container toolkit
+  ansible.builtin.apt:
+    name: "{{ lxc_docker_nvidia_toolkit_package }}"
+    state: present
+    update_cache: "{{ not (lxc_docker_offline | bool) }}"
+
+# Unprivileged LXC: nvidia-container-cli cannot manage the device cgroup.
+- name: Configure the NVIDIA runtime for unprivileged LXC
+  ansible.builtin.command:
+    cmd: nvidia-ctk config --in-place --set nvidia-container-cli.no-cgroups=true
+  changed_when: false
+
+- name: Read the Docker daemon configuration before NVIDIA setup
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: lxc_docker_daemon_before
+  failed_when: false
+
+- name: Configure the NVIDIA runtime for Docker
+  ansible.builtin.command:
+    cmd: nvidia-ctk runtime configure --runtime=docker
+  changed_when: false
+
+- name: Read the Docker daemon configuration after NVIDIA setup
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: lxc_docker_daemon_after
+  failed_when: false
+
+- name: Restart Docker when the runtime configuration changed
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted
+  when: >-
+    (lxc_docker_daemon_before.content | default('') | b64decode) !=
+    (lxc_docker_daemon_after.content | default('') | b64decode)
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Verify Docker Compose is available
+  ansible.builtin.command:
+    cmd: docker compose version
+  changed_when: false
+
+- name: Load the CUDA smoke image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "docker load -i {{ llm_bundle_dir | default('/airgap-bundle') }}/images/cuda-smoke.tar"
+  changed_when: false
+  when:
+    - lxc_docker_offline | bool
+    - lxc_docker_gpu_smoke_test | bool
+
+- name: Run nvidia-smi in a CUDA container
+  ansible.builtin.command:
+    cmd: "docker run --rm --gpus all {{ lxc_docker_gpu_smoke_image }} nvidia-smi -L"
+  register: lxc_docker_gpu_smoke
+  changed_when: false
+  when: lxc_docker_gpu_smoke_test | bool

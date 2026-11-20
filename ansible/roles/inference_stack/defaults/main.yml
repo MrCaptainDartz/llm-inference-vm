@@ -1,0 +1,44 @@
+---
+# vLLM chat + embedding, and LiteLLM in front of them.
+# The vLLM services are only exposed on the compose network (plus 127.0.0.1
+# for debugging); LiteLLM is the only LAN-facing API.
+
+inference_stack_root: "/srv/llm"
+inference_stack_compose_dir: "/srv/llm/compose"
+inference_stack_litellm_dir: "/srv/llm/litellm"
+inference_stack_hf_cache_dir: "/srv/llm/hf-cache"
+
+vllm_image: "vllm/vllm-openai:v0.34.0"
+vllm_served_model_name: "qwen3.8-27b"
+vllm_model_path: "{{ '/models/qwen3.8-27b-nvfp4' if (airgap_mode | default(false)) else 'unsloth/Qwen3.8-27B-NVFP4' }}"
+vllm_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode | default(false)) else 'maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal' }}"
+vllm_speculative_method: "dflash"
+vllm_speculative_num_tokens: 7
+vllm_gpu_memory_utilization: 0.82
+vllm_max_model_len: 262144
+vllm_kv_cache_dtype: "nvfp4"
+vllm_attention_backend: "flash_attn"
+vllm_max_num_seqs: 4
+vllm_max_num_batched_tokens: 32768
+vllm_enforce_eager: false
+vllm_reasoning_parser: "qwen3"
+vllm_tool_call_parser: "qwen3_coder"
+vllm_enable_auto_tool_choice: true
+vllm_hf_token: ""
+
+# false = deploy the stack but only start LiteLLM (no GPU model load).
+vllm_start: true
+
+vllm_offline: "{{ airgap_mode | default(false) }}"
+vllm_bundle_dir: "{{ llm_bundle_dir | default('/airgap-bundle') }}"
+
+vllm_embedding_enabled: true
+vllm_embedding_model_path: "{{ '/models/qwen3-embedding-0.6b' if (airgap_mode | default(false)) else 'Qwen/Qwen3-Embedding-0.6B' }}"
+vllm_embedding_served_model_name: "qwen3-embedding-0.6b"
+vllm_embedding_gpu_memory_utilization: 0.06
+vllm_embedding_max_model_len: 32768
+vllm_embedding_port: 8001
+
+litellm_image: "ghcr.io/berriai/litellm:main-stable"
+litellm_port: 4000
+litellm_master_key: "change-me"

@@ -1,241 +1,254 @@
 # llm-inference-vm
 
-Infrastructure d'une VM dédiée à l'inférence LLM locale, sur Proxmox VE :
+Stack d'inférence LLM locale sur Proxmox VE, séparée en deux machines :
 
-- **`iac/`** — création de la VM (Ubuntu 26.04 Cloud-Init, OpenTofu + provider `bpg/proxmox`), avec passthrough GPU NVIDIA optionnel (`pci_devices`).
-- **`ansible/`** — provisionnement post-boot : sécurisation, Podman rootless, compte de service non-admin, puis services LLM (SGLang, Open WebUI, Docling) en conteneurs rootless gérés par Quadlet.
+- **LXC `llm-lxc`** (non privilégié, 192.0.2.10) : **vLLM** (chat +
+  embeddings) et **LiteLLM** (proxy OpenAI-compatible, seule API exposée au
+  LAN). Le GPU reste attaché à l'hôte Proxmox et est injecté dans le LXC par le
+  hook NVIDIA de Proxmox + les règles cgroup — **pas de passthrough PCI/VFIO**.
+- **VM `llm-webui`** (192.0.2.11) : **Open WebUI** (:8080) et **Docling**
+  (:5001, localhost). Aucun GPU, aucun vLLM/SGLang/NVIDIA dans cette VM.
 
-Démarrage rapide : voir **[QUICKSTART.md](QUICKSTART.md)**.
+LiteLLM est le seul point d'entrée pour les utilisateurs/outils ; vLLM n'est
+jamais exposé directement. Open WebUI et les outils de code (Pi, omp, etc.)
+passent par LiteLLM.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     subgraph LAN
-        W[Outils / navigateur\nClaude Code, Pi, omp]
+        T[Outils / navigateur<br/>Claude Code, Pi, omp]
     end
     subgraph PVE[Proxmox VE]
-        subgraph VM[VM Ubuntu 26.04]
-            U[user inference\nPodman rootless + linger]
-            subgraph NET[reseau podman llm]
-                S[sglang :30000]
-                E[sglang-embedding]
-                D[docling :5001]
-                O[open-webui :8080]
-            end
-            U --> NET
+        subgraph LXC[LXC llm-lxc 192.0.2.10]
+            V[vLLM chat :8000<br/>localhost]
+            E[vLLM embedding :8001<br/>localhost]
+            L[LiteLLM :4000<br/>LAN]
+            V --> L
+            E --> L
         end
-        G[(GPU NVIDIA\npassthrough + CDI)]
-        S -. AddDevice .-> G
-        E -. AddDevice .-> G
+        subgraph VM[VM llm-webui 192.0.2.11]
+            O[Open WebUI :8080<br/>LAN]
+            D[Docling :5001<br/>localhost]
+            O --> D
+        end
+        G[(GPU 48 Go<br/>driver sur l'hôte<br/>NVIDIA LXC hook)]
+        G -. CUDA .-> V
+        G -. CUDA .-> E
+        O -->|/v1| L
     end
-    W -->|:8080| O
-    W -->|:30000 /v1| S
-    O --> S
-    O --> E
-    O --> D
+    T --> O
+    T -->|:4000 /v1| L
 ```
 
-Tous les services applicatifs tournent sous le compte non-admin `inference` en Podman rootless (unités systemd user générées depuis des Quadlets dans `~/.config/containers/systemd/`), sur un réseau Podman partagé `llm` où les conteneurs se joignent par nom. Le GPU est exposé aux conteneurs via la spécification CDI NVIDIA (`AddDevice=nvidia.com/gpu=all`) — pas de `--privileged`, pas de gVisor (incompatible GPU).
+## Ce qui tourne où
 
-Inspiré de [`iac-ai-agent`](../iac-ai-agent) : mêmes patterns OpenTofu et rôles de base (sécurisation, Podman, user de service), sans les concepts d'agents/brokers.
+| Composant | Machine | Exposition | Rôle |
+|---|---|---|---|
+| vLLM chat | LXC 120 | `127.0.0.1:8000` + réseau Docker interne | Qwen3.8-27B-NVFP4 + DFlash2 |
+| vLLM embedding | LXC 120 | réseau Docker interne | Qwen3-Embedding-0.6B |
+| LiteLLM | LXC 120 | LAN `:4000` | proxy, master key, seul endpoint public |
+| Open WebUI | VM 112 | LAN `:8080` | chat + RAG |
+| Docling | VM 112 | `127.0.0.1:5001` | parsing PDF pour le RAG |
+
+Ports LAN : `8080` (Open WebUI), `4000` (LiteLLM). `8000/8001/5001` restent
+locaux. Le TLS est terminé par le reverse-proxy interne, comme avant.
 
 ## Prérequis
 
-- **Poste de pilotage** : `tofu` (OpenTofu ≥ 1.8), `ansible-core` + `community.general`, `ansible-lint` (profil production), SSH.
-- **Proxmox VE** : token API `root@pam` (ou équivalent) avec droits sur le node ; datastore d'images et de snippets `local`.
-- **Réseau** : une bridge reachable depuis le poste (la VM prend une IP statique via Cloud-Init).
-- Pour l'airgap : en plus, un builder Ubuntu 26.04 amd64 avec accès internet (voir plus bas).
+- **Proxmox VE 9.2+**, `lxc-pve >= 6.0.5` (le host de test `pve-node1` est en 9.2.27
+  avec `lxc-pve 7.0.0`).
+- Driver NVIDIA + `nvidia-container-toolkit` sur l'hôte (voir
+  [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
+- Poste de pilotage : `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
+  `community.general`, une clé SSH.
+- Pour l'airgap : un builder Ubuntu 26.04 amd64 avec internet (voir
+  [docs/AIRGAP.md](docs/AIRGAP.md)).
 
 ## Structure
 
-```
-iac/                                  # OpenTofu — création de la VM
-  providers.tf                        #   provider bpg/proxmox
-  main.tf                             #   VM unique (q35/ovmf, hostpci GPU, cloud-init)
-  variables.tf                        #   ressources, réseau, GPU, accès
-  outputs.tf                          #   vm_id, vm_ips
-  terraform.tfvars.example            #   à copier en terraform.tfvars (gitignoré)
+```text
+iac/                                  # OpenTofu — LXC + VM front
+  providers.tf                        #   bpg/proxmox
+  main.tf                             #   LXC 120 + VM 112, template/cloud image
+  variables.tf                        #   réseau (bridge/VLAN/IP), ressources
+  outputs.tf                          #   lxc_ip, front_vm_ip, URLs
+  terraform.tfvars.example
 
 ansible/
-  playbook.yml                        # ... → nvidia → sglang → docling → open_webui
-  playbook-download.yml               #   airgap : construction du bundle (hosts: bundle_builder)
-  ansible.cfg                         # inventory/ + roles_path ./roles
-  inventory/inventory.yml.example      #   à copier en inventory.yml (gitigné)
-  group_vars/all.yml.example          #   à copier en all.yml (gitigné)
+  playbook.yml                        # play LXC + play VM front
+  playbook-download.yml               # wrapper du script airgap (builder)
+  inventory/inventory.yml.example
+  group_vars/all.yml.example
   roles/
-    system_timezone                   #   timezone + NTP (systemd-timesyncd)
-    essential_packages               #   socle de paquets + qemu-guest-agent
-    developer_config                 #   vim + git (système)
-    security_hardening               #   SSH (clés uniquement), sysctl, fail2ban, unattended-upgrades,
-                                      #   auditd, AppArmor, umask, pwquality, journald, coredumps off
-    inference_user                    #   user non-admin "inference" : linger, socket Podman rootless,
-                                      #   clés SSH
-    podman                            #   Podman rootless (+ compat docker/compose), délégation cgroup v2,
-                                      #   réseau partagé "llm" (quadlet)
-    firewall                          #   UFW : deny incoming, allow outgoing, rate-limit SSH
-    nvidia                            #   driver headless + nvidia-container-toolkit + spec CDI
-                                      #   (AddDevice=nvidia.com/gpu=all) — flag nvidia_enabled
-    sglang                            #   moteur d'inférence CUDA (quadlet), décodage spéculatif DFlash2 :
-                                      #   sglang_model_path + sglang_draft_model_path configurables,
-                                      #   API OpenAI-compatible sur :30000 (LAN) — flag sglang_enabled.
-                                      #   + instance embedding RAG (sglang_embedding_enabled)
-    docling                           #   docling-serve (parsing RAG), image CPU ou CUDA (docling_gpu),
-                                      #   UI sur 127.0.0.1:5001, interne au réseau podman — flag docling_enabled
-    open_webui                        #   chat + RAG sur :8080 (LAN), extraction de documents via
-                                      #   docling, backend chat via sglang quand activé — flag open_webui_enabled
-    bundle_download                   #   (builder) apt closure, images skopeo, modèles HF, artifacts
-                                      #   docling, image cloud → airgap-bundle/
-    airgap                            #   (VM) apt offline sur le repo local du bundle
+    airgap                            # apt local du bundle
+    system_timezone                   # timezone (+ NTP sur la VM front)
+    essential_packages                # paquets de base VM
+    developer_config
+    security_hardening                # SSH, fail2ban, auditd, AppArmor, UFW...
+    inference_user                    # user non-admin, linger
+    podman                            # Podman rootless (VM front)
+    firewall                          # UFW (VM front)
+    lxc_base                          # socle du LXC, SSH key-only
+    lxc_docker                        # Docker + toolkit NVIDIA + smoke test
+    inference_stack                   # compose vLLM/LiteLLM
+    docling                           # docling-serve (CPU)
+    open_webui                        # Open WebUI -> LiteLLM
 
-airgap-bundle/                        #   bundle construit (gitigné, sauf .gitkeep)
+scripts/
+  proxmox-lxc-gpu.sh                  # features/hooks/cgroup/SHM/bundle LXC
+  fetch-airgap-bundle.sh              # builder online : host + images + modèles
+  test.pdf                            # PDF de validation Docling
+
+docs/
+  HOST-INSTALL.md                     # driver/toolkit/hooks/template Proxmox
+  AIRGAP.md                           # build/transfert/installation offline
 ```
 
-## Déploiement
+## Déploiement (mode online, host de test)
 
-### 1. Créer la VM (OpenTofu)
+### 1. Préparer l'hôte Proxmox
+
+Suivre [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md) : driver NVIDIA, toolkit,
+template LXC Ubuntu 26.04, image cloud. Le host `pve-node1` est déjà préparé.
+
+### 2. Créer le LXC et la VM front
 
 ```bash
 cd iac
-cp terraform.tfvars.example terraform.tfvars   # renseigner : API Proxmox, clé SSH, node, IP, GPU
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars      # API Proxmox, SSH, node, bridge, IPs
 tofu init
 tofu apply
 ```
 
-Sorties : `vm_id`, `vm_name`, `vm_ips`. Le passthrough GPU se déclare via `pci_devices` (mapping cluster Proxmox ou ID PCI direct) ; sans GPU, la VM démarre en CPU-only. Sur la VM GPU, mettre `efi_pre_enrolled_keys = false` (modules NVIDIA open non signés vs Secure Boot).
+Valeurs par défaut : LXC `llm-lxc` **120** → `192.0.2.10/24`, VM
+`llm-webui` **112** → `192.0.2.11/24`. Le bridge, la gateway, le VLAN et les
+IPs sont des variables (`network_bridge`, `network_gateway`, `network_vlan_id`,
+`lxc_ipv4`, `front_vm_ipv4`). L'ancienne VM 103 de l'ancienne archi est
+détruite si elle est encore dans le state.
 
-### 2. Provisionner (Ansible)
+### 3. Ajouter les hooks GPU au LXC
+
+Sur l'hôte Proxmox :
+
+```bash
+/path/to/repo/scripts/proxmox-lxc-gpu.sh 120
+# airgap : ajouter --bundle /srv/airgap-bundle
+```
+
+Le script active `nesting/keyctl/fuse/mknod`, ajoute les règles cgroup des
+majors NVIDIA détectés, le hook `/usr/share/lxc/hooks/nvidia`, 16 GiB de
+`/dev/shm`, et vérifie `nvidia-smi` dans le LXC. Il ne monte pas `/dev/dri`
+(inutile pour CUDA).
+
+### 4. Provisionner
 
 ```bash
 cd ansible
-cp inventory/inventory.yml.example inventory.yml   # ansible_host = vm_ips
+cp inventory/inventory.yml.example inventory/inventory.yml
 cp group_vars/all.yml.example group_vars/all.yml
+$EDITOR group_vars/all.yml     # litellm_master_key, litellm_base_url, vllm_start
 ansible-playbook playbook.yml
 ```
 
-Le playbook attend la fin de cloud-init, applique les rôles, puis reboote si un kernel a été mis à jour (`system_reboot_on_kernel_update`).
+Le play LXC installe Docker + `nvidia-container-toolkit`, configure le runtime
+Docker `nvidia` avec `no-cgroups=true`, puis déploie le compose vLLM/LiteLLM.
+Le play VM front installe Podman rootless, Docling et Open WebUI.
 
-### 3. Accès
+### 5. Accès
 
-- Admin : `ssh ubuntu@<ip>` (user Cloud-Init).
-- Services : `ssh inference@<ip>` — user non-admin, `systemctl --user`, socket Podman (`DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock`, déjà exporté dans son `.bashrc`).
+- Admin LXC : `ssh root@192.0.2.10` (clé injectée par Terraform).
+- Admin VM : `ssh ubuntu@192.0.2.11`.
+- Services VM : `ssh inference@192.0.2.11`, `systemctl --user status`.
+- LiteLLM : `http://192.0.2.10:4000/v1` (bearer = `litellm_master_key`).
+- Open WebUI : `http://192.0.2.11:8080`.
+- Docling : `http://127.0.0.1:5001` depuis la VM front.
 
-### 4. Services LLM
+## Flags principaux (`ansible/group_vars/all.yml`)
 
-Pilotés par flags dans `group_vars/all.yml` :
-
-| Service | Flag | Détail |
+| Variable | Défaut | Rôle |
 |---|---|---|
-| NVIDIA driver + toolkit CDI | `nvidia_enabled` | requis par tout usage GPU (le rôle assert qu'un GPU est présent) |
-| SGLang (API OpenAI :30000) | `sglang_enabled` | modèle + draft DFlash2 via `sglang_model_path` / `sglang_draft_model_path` ; profil PRO 5000 48 GB dans le rôle |
-| SGLang embedding (RAG `/v1/embeddings`) | `sglang_embedding_enabled` | 2ᵉ instance SGLang sur le même GPU : Qwen3-Embedding-0.6B (32K ctx, 1024-dim) ; debug `127.0.0.1:30001` ; Open WebUI branché dessus automatiquement |
-| Docling (RAG parsing) | `docling_enabled`, `docling_gpu` | UI debug sur `127.0.0.1:5001/ui` |
-| Open WebUI (:8080) | `open_webui_enabled` | auto-connecté à docling et sglang selon les flags |
+| `vllm_start` | `true` | démarre vLLM chat + embedding ; **`false` sur pve-node1** (GPU 8 Go) |
+| `vllm_embedding_enabled` | `true` | 2ᵉ vLLM pour les embeddings RAG |
+| `vllm_enforce_eager` | `false` | workaround si décode NVFP4/DFlash sm120 instable |
+| `vllm_gpu_memory_utilization` | `0.82` | budget VRAM du chat |
+| `vllm_embedding_gpu_memory_utilization` | `0.06` | budget VRAM des embeddings |
+| `docling_enabled` | `true` | Docling dans la VM front (CPU) |
+| `docling_gpu` | `false` | doit rester `false` : la VM front n'a pas de GPU |
+| `open_webui_enabled` | `true` | Open WebUI dans la VM front |
+| `airgap_mode` | `false` | bascule apt/images/modèles hors ligne |
 
-Sur une VM sans GPU, seuls open_webui + docling (CPU) sont fonctionnels ; la VM GPU
-ajoute `nvidia_enabled: true` + `sglang_enabled: true` (+ `sglang_embedding_enabled: true`,
-`docling_gpu: true`, abordable sur la carte 48 GB).
+## Profil GPU cible : GPU 48 Go
 
-Ports exposés :
+Le profil par défaut de `inference_stack` est calibré pour cette carte :
 
-| Port | Service | Exposition |
-|---|---|---|
-| 8080 | Open WebUI | LAN (UFW ouvert) |
-| 30000 | SGLang API OpenAI-compatible | LAN (UFW ouvert) |
-| 5001 | Docling UI | `127.0.0.1` uniquement |
-| 30001 | SGLang embedding (debug) | `127.0.0.1` uniquement |
+- modèle `unsloth/Qwen3.8-27B-NVFP4` (corps NVFP4, lm_head FP8) ;
+- drafter `maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal`
+  (`Qwen3DFlash2DraftModel`, `block_size = 8` → `num_speculative_tokens = 7`) ;
+- vLLM `v0.34.0` (CUDA 13.0) ;
+- `--speculative-config '{"method":"dflash","model":"<drafter>","num_speculative_tokens":7}'` ;
+- `--attention-backend flash_attn` (requis par DFlash) ;
+- `--kv-cache-dtype nvfp4` ;
+- `--max-model-len 262144`, `--max-num-seqs 4`,
+  `--max-num-batched-tokens 32768` ;
+- budget : chat `0.82 × 48 = 39.4 Go` (poids ≈ 18.5 Go + KV), embedding
+  `0.06 × 48 = 2.9 Go`, ≈ 5.7 Go de marge.
 
-Exposition assumée : HTTP brut sur :8080/:30000 — le TLS est terminé par le
-reverse-proxy interne (VLAN dédié). `sglang_api_key` (group_vars) protège
-`:30000` par un bearer token (tout sauf `/health`, `/ready`, `/metrics`).
-Sur `:8080`, le **premier compte créé devient admin** — créez-le immédiatement,
-puis désactivez l'inscription dans le panneau admin.
-La WebUI fait confiance aux en-têtes `X-Forwarded-*` du proxy
-(`FORWARDED_ALLOW_IPS=*` : URLs https correctes, IPs clients dans les logs).
-La clé de session (`WEBUI_SECRET_KEY`) est générée par Ansible et persiste dans
-`~/open-webui/secret_key`.
+Le host `pve-node1` n'a qu'une **GPU 8 Go** : on n'y démarre pas le 27B. On y
+valide le LXC, Docker, le hook GPU (`nvidia-smi` uniquement), LiteLLM, Open
+WebUI et Docling. Le modèle 27B et DFlash2 se valident sur le serveur 48 Go.
 
-## GPU cible : RTX PRO 5000 Blackwell 48 GB
+## Airgap
 
-sm120, NVFP4 supporté. Le profil SGLang par défaut (rôle `sglang`) est calibré
-pour cette carte : modèle `unsloth/Qwen3.8-27B-NVFP4` (corps NVFP4 + lm_head FP8,
-requiert SGLang >= v0.5.19) avec draft DFlash2 NVFP4 calibré (`maurienne-ai/...`).
-Budget à `--mem-fraction-static 0.85` (max 40.8 GB) : ~18.5 GB de poids +
-~3.5 GB de runtime → **~17 GB de KV fp8 ≈ 520K tokens**
-(256K natif en mono-requête, ou 4 requêtes × ~130K). La KV 4-bit n'est pas
-supportée sur ce modèle hybride-GDN — fp8_e4m3 est le plancher. Voir
-https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B et
-https://github.com/MiaAI-Lab/Qwen3.8-27B-RTX-6000-PRO-SGLang-DSpark.
+Tout est embarqué dans un bundle construit sur un builder connecté :
 
-Reste **4.8 GB** de VRAM libre (48 − 40.8 − 2.4 pour l'embedding à
-`--mem-fraction-static 0.05`). Avec `docling_gpu: true` (contexte CUDA + OCR
-~4-5 GB), le pool statique SGLang retombe automatiquement à `0.78`
-(`sglang_mem_fraction_static`).
+```bash
+sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
+```
 
-Blackwell (sm120) impose les **modules kernel open** (`-open` : le flavor
-propriétaire ne supporte pas sm120) → Secure Boot désactivé sur la VM (DKMS non
-signé). Le rôle `nvidia` assert ces deux points.
-
-## Déploiement airgap
-
-La VM d'inférence (et éventuellement le node Proxmox) n'ont pas d'accès
-internet. Tout est embarqué dans un bundle construit ailleurs :
-
-1. **Builder** — host Ubuntu 26.04 amd64 avec internet, idéalement une instance
-   fraîche de la même image cloud que la VM (groupe `bundle_builder` de
-   l'inventory) : la closure apt n'est correcte que dans ce cas. Le repo doit
-   être cloné sur ce builder (sinon surcharger `bundle_download_dir` dans
-   group_vars) :
-   ```bash
-   ansible-playbook playbook-download.yml
-   ```
-   Produit `<repo>/airgap-bundle/` (gitignoré) : repo apt local (`repo/`),
-   images conteneurs (`images/`), snapshots HF (`models/`), artifacts Docling
-   pré-bakés (`docling-artifacts/`), image cloud Ubuntu (`cloudimg/`).
-2. **Transfert** — rsync/scp du bundle vers la VM à `/airgap-bundle`
-   (`llm_bundle_dir`) ;
-   pour un Proxmox isolé, uploader aussi `cloudimg/*.img` dans le datastore
-   `local` du node (`/var/lib/vz/template/iso/`) et mettre
-   `cloud_image_preuploaded = true` + `enable_cloudinit_snippet = false`
-   dans `terraform.tfvars`.
-3. **Installation** — dans `group_vars/all.yml` : `airgap_mode: true` (les
-   chemins de modèles `/models/…`, `unattended-upgrades` off,
-   `OFFLINE_MODE`/`HF_HUB_OFFLINE=1` suivent automatiquement), puis
-   `ansible-playbook playbook.yml` comme d'habitude.
-
-Le rôle `airgap` bascule apt sur le repo local du bundle (sources réseau
-désactivées, échec avec instructions si le bundle est absent) ; les rôles
-services chargent les images via `podman load` au lieu de pull (idempotent),
-et SGLang sert les modèles depuis les répertoires montés avec `HF_HUB_OFFLINE=1`.
+Puis transférer, installer le driver/toolkit, créer les machines et lancer
+Ansible avec `airgap_mode: true`. Détails et layout du bundle :
+[docs/AIRGAP.md](docs/AIRGAP.md). Le script résout les dernières versions au
+build et écrit `manifest.json` (images/digests, modèles, driver).
 
 ## Opérations
 
-Tout tourne sous le user `inference` (linger activé → survit aux logout) :
+LXC :
 
 ```bash
-ssh inference@<ip>
-systemctl --user status sglang sglang-embedding docling open-webui
-journalctl --user -u sglang -f           # logs du moteur
-podman ps                                # conteneurs du réseau llm
-systemctl --user restart open-webui      # après édition d'un quadlet :
-systemctl --user daemon-reload           # toujours daemon-reload avant
+ssh root@192.0.2.10
+nvidia-smi
+docker ps
+docker compose -f /srv/llm/compose/compose.yaml ps
+docker logs -f vllm
+curl -s http://127.0.0.1:8000/v1/models
+curl -s -H "Authorization: Bearer $KEY" http://127.0.0.1:4000/v1/models
 ```
 
-Vérifications santé :
+VM front :
 
 ```bash
-curl -s http://<ip>:8080/health          # Open WebUI
-curl -s http://<ip>:30000/v1/models      # SGLang (-H "Authorization: Bearer <clé>" si sglang_api_key)
-curl -s http://127.0.0.1:5001/health     # Docling (depuis la VM)
+ssh ubuntu@192.0.2.11
+ssh inference@192.0.2.11
+systemctl --user status open-webui docling llm-network
+podman ps
+curl -s http://127.0.0.1:5001/health
+curl -s http://127.0.0.1:8080/health
 ```
 
 ## Prochaines étapes
 
-1. Passthrough GPU dans `terraform.tfvars` (`pci_devices`), puis déployer :
-   vérifier `nvidia-smi`, SGLang + décodage DFlash2 end-to-end.
-2. Sur le matériel réel : tenter `--max-running-requests 4 --cuda-graph-max-bs 4`
-   (batched DFlash2 non vérifié) pour que plusieurs outils partagent l'API.
+1. Sur le serveur 48 Go : `vllm_start: true`, puis
+   `ansible-playbook playbook.yml --limit inference_lxc`.
+2. Vérifier le chargement du 27B et de DFlash2 :
+   `docker logs -f vllm`, `curl :8000/v1/models`, puis un chat via LiteLLM.
+3. Valider `--kv-cache-dtype nvfp4` et le batch DFlash2 sur la carte réelle ;
+   si erreur `CUDA illegal instruction`, passer `vllm_enforce_eager: true`.
+4. Construire et tester le bundle airgap sur le site cible.
+5. Ajuster les budgets VRAM si nécessaire (`0.82`/`0.06`).
 
 ## Licence
 
-Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
+MIT — voir [LICENSE](LICENSE).

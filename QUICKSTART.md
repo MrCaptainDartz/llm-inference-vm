@@ -1,33 +1,28 @@
 # Quickstart
 
-De zéro à une VM d'inférence LLM sur Proxmox, avec chat WebUI + RAG sur le LAN.
-~30 minutes hors téléchargement des poids du modèle.
+De zéro à une stack d'inférence LLM sur Proxmox, avec :
 
-Deux chemins d'installation, fork à l'étape 3 :
+- un **LXC** pour vLLM (chat + embeddings) et LiteLLM ;
+- une **VM** pour Open WebUI + Docling ;
+- le GPU NVIDIA sur l'hôte, injecté dans le LXC par le hook Proxmox ;
+- un mode **airgap** pour le site cible.
 
-- **Chemin A — Internet** : la VM a un egress, tout se télécharge au premier
-  démarrage des services.
-- **Chemin B — Airgap** : la VM (et éventuellement le node Proxmox) n'ont pas
-  d'accès internet ; tout transite par un bundle construit sur un builder
-  Ubuntu 26.04 avec internet.
+~30 minutes hors téléchargement des modèles et build du bundle.
 
 ## 0. Prérequis
 
-Commun :
-
-- Proxmox VE avec un token API (droits sur le node cible).
-- Poste de pilotage : `tofu` (OpenTofu ≥ 1.8), `ansible-core` + collection
-  `community.general`, une clé SSH publique.
+- Proxmox VE 9.2+ avec `lxc-pve >= 6.0.5`.
+- Driver NVIDIA + `nvidia-container-toolkit` sur l'hôte
+  ([docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
+- Poste de pilotage : `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
+  `community.general`, une clé SSH.
+- Airgap : un builder Ubuntu 26.04 amd64 avec internet.
 
 ```bash
 ansible-galaxy collection install community.general
 ```
 
-Chemin B uniquement — un **builder** : host Ubuntu 26.04 amd64 avec internet,
-idéalement une instance fraîche de la même image cloud que la VM (la closure
-apt du bundle n'est correcte que dans ce cas), avec le repo cloné dessus.
-
-## 1. Créer la VM
+## 1. Créer le LXC et la VM front
 
 ```bash
 cd iac
@@ -35,159 +30,163 @@ cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
 ```
 
-À renseigner au minimum : `proxmox_api_url`, `proxmox_api_token`,
-`ssh_public_key`, `vm_node_name`, `network_interfaces` (bridge + IP statique).
+Renseigner au minimum : `proxmox_api_url`, `proxmox_api_token`,
+`ssh_public_key`, `vm_node_name`, `network_bridge`, `network_gateway`,
+`lxc_ipv4`, `front_vm_ipv4`.
 
-Avec GPU : ajouter le passthrough et désactiver Secure Boot —
-
-```hcl
-pci_devices = [{ mapping = "gpu", pcie = true, rombar = true, xvga = false }]
-efi_pre_enrolled_keys = false
-```
-
-Chemin B avec **node Proxmox isolé** : uploader au préalable
-`airgap-bundle/cloudimg/*.img` dans le datastore `local` du node
-(`/var/lib/vz/template/iso/`), puis dans `terraform.tfvars` :
-
-```hcl
-cloud_image_preuploaded = true    # pas de téléchargement par OpenTofu
-enable_cloudinit_snippet = false  # pas d'apt cloud-init au premier boot
-```
-
-Puis, sur tous les chemins :
+Défauts : LXC 120 `llm-lxc` → `192.0.2.10/24`, VM 112 `llm-webui` →
+`192.0.2.11/24`.
 
 ```bash
 tofu init
-tofu apply          # noter vm_ips en sortie
+tofu apply
 ```
 
-## 2. Préparer la configuration Ansible
+L'ancienne VM 103 de l'ancienne architecture est détruite si elle est encore
+dans le state. Le LXC et la VM démarrent ; les hooks GPU sont ajoutés ensuite.
+
+## 2. Ajouter les hooks GPU au LXC
+
+Sur l'hôte Proxmox :
+
+```bash
+/path/to/repo/scripts/proxmox-lxc-gpu.sh 120
+```
+
+Cela active les features Docker-in-LXC, les règles cgroup NVIDIA, le hook
+`/usr/share/lxc/hooks/nvidia`, 16 GiB de `/dev/shm`, et vérifie `nvidia-smi`
+dans le LXC. En airgap, ajouter
+`--bundle /srv/airgap-bundle`.
+
+## 3. Configurer Ansible
 
 ```bash
 cd ../ansible
-cp inventory/inventory.yml.example inventory/inventory.yml    # ansible_host = vm_ips
+cp inventory/inventory.yml.example inventory/inventory.yml
 cp group_vars/all.yml.example group_vars/all.yml
 $EDITOR group_vars/all.yml
 ```
 
-
-Flags pour la VM GPU — dans `group_vars/all.yml`, passer à `true` :
-
-```yaml
-nvidia_enabled: true          # driver NVIDIA open + CDI
-sglang_enabled: true          # moteur LLM, API :30000
-# sglang_embedding_enabled est déjà true (embeddings RAG, Qwen3-Embedding-0.6B)
-docling_gpu: true             # parsing RAG sur GPU : le pool SGLang retombe à 0.78 automatiquement
-```
-
-Sans GPU : ne rien changer — Open WebUI + Docling (CPU) fonctionnent déjà,
-seul le chat LLM est absent (pas de backend).
-
-Chemin B uniquement — déclarer le builder dans `inventory/inventory.yml`
-(groupe `bundle_builder` déjà présent dans l'example) :
+À renseigner :
 
 ```yaml
-bundle_builder:
-  hosts:
-    bundle-builder:
-      ansible_host: 10.0.0.20     # ou ansible_connection: local si c'est ce host
-      ansible_user: ubuntu
+litellm_master_key: "<openssl rand -hex 32>"
+litellm_base_url: "http://192.0.2.10:4000/v1"   # aligné sur lxc_ipv4
+
+# Serveur 48 Go :
+vllm_start: true
+# pve-node1 (GPU 8 Go, test) :
+# vllm_start: false
 ```
 
-## 3. Installer
+Airgap : ajouter `airgap_mode: true` et `llm_bundle_dir: /airgap-bundle`.
 
-### Chemin A — Internet
+## 4. Installer
 
-```bash
-ansible-playbook playbook.yml     # reboote si un kernel a été mis à jour
-```
-
-Les images conteneurs sont pullées par le playbook, les poids du modèle
-(tens de GB) par SGLang à son premier start — pas de timeout systemd,
-surveiller `journalctl --user -u sglang -f` depuis `ssh inference@<ip>`.
-
-### Chemin B — Airgap
-
-**3.1. Construire le bundle** — sur le builder (repo cloné dessus), depuis
-`ansible/` :
-
-```bash
-ansible-playbook playbook-download.yml
-```
-
-Produit `<repo>/airgap-bundle/` : repo apt local (`repo/`), images conteneurs
-(`images/`), snapshots HF (`models/`), artifacts Docling pré-bakés
-(`docling-artifacts/`), image cloud Ubuntu (`cloudimg/`).
-
-**3.2. Transférer** vers la VM :
-
-```bash
-rsync -a airgap-bundle/ ubuntu@<ip>:/airgap-bundle/
-```
-
-**3.3. Basculer en mode offline** — dans `group_vars/all.yml` :
-
-```yaml
-airgap_mode: true
-llm_bundle_dir: /airgap-bundle
-```
-
-Tout le reste suit automatiquement : chemins de modèles (`/models/…`),
-`unattended-upgrades` off, `OFFLINE_MODE` / `HF_HUB_OFFLINE=1` dans les
-conteneurs, montage des modèles en lecture seule.
-
-**3.4. Installer** — depuis le poste de pilotage, comme au chemin A :
+### Chemin A — Online
 
 ```bash
 ansible-playbook playbook.yml
 ```
 
-Le rôle `airgap` bascule apt sur le repo local du bundle, les images sont
-chargées via `podman load`, et SGLang sert les modèles depuis `/models` avec
-`HF_HUB_OFFLINE=1`.
+Le play LXC installe Docker + toolkit NVIDIA, configure le runtime Docker et
+démarre LiteLLM (et vLLM si `vllm_start: true`). Le play VM installe Podman
+rootless, Docling et Open WebUI.
 
-## 4. Vérifier
+Sur `pve-node1` (GPU 8 Go), `vllm_start: false` : LiteLLM démarre seul, Open WebUI
+et Docling fonctionnent. Le chat LLM n'est pas disponible sur cette machine.
+
+### Chemin B — Airgap
+
+1. Sur le builder :
+
+   ```bash
+   sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
+   ```
+
+2. Transférer le bundle :
+
+   ```bash
+   rsync -a airgap-bundle/ root@<pve>:/srv/airgap-bundle/
+   rsync -a airgap-bundle/ ubuntu@<front>:/airgap-bundle/
+   ```
+
+3. `iac/terraform.tfvars` :
+
+   ```hcl
+   cloud_image_preuploaded        = true
+   ubuntu_lxc_template_preuploaded = true
+   enable_cloudinit_snippet       = true
+   ```
+
+4. `tofu apply`, puis `scripts/proxmox-lxc-gpu.sh <CTID> --bundle ...`.
+
+5. `all.yml` : `airgap_mode: true`, `llm_bundle_dir: /airgap-bundle`, puis
+   `ansible-playbook playbook.yml`.
+
+Détails : [docs/AIRGAP.md](docs/AIRGAP.md).
+
+## 5. Vérifier
 
 ```bash
-ssh ubuntu@<ip> nvidia-smi                        # VM GPU : le driver est chargé
-curl -s http://<ip>:8080/health                   # Open WebUI
-curl -s http://<ip>:30000/v1/models | jq '.data[].id'   # SGLang prête
+# Hôte / LXC
+ssh root@192.0.2.10 nvidia-smi
+ssh root@192.0.2.10 docker ps
+ssh root@192.0.2.10 'docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi -L'
+
+# LiteLLM
+curl -s -H "Authorization: Bearer $LITELLM_KEY" \
+  http://192.0.2.10:4000/v1/models
+
+# VM front
+curl -s http://192.0.2.11:8080/health
+ssh ubuntu@192.0.2.11 'curl -s http://127.0.0.1:5001/health'
 ```
 
-Identique sur les deux chemins — en airgap, aucun téléchargement ne doit
-apparaître dans les logs des conteneurs.
-
-## 5. Premier chat
-
-1. Ouvrir `http://<ip>:8080`, créer le compte (le premier devient admin).
-2. Sélectionner le modèle servi (ex. `qwen3.8-27b`) et discuter.
-
-## 6. RAG : indexer un document
-
-1. `http://<ip>:8080` → **Espace de travail → Base de connaissances** → créer.
-2. Uploader un PDF : Docling l'analyse (extraction), les chunks sont embarqués
-   via le serveur d'embedding SGLang.
-3. Dans un chat, mentionner la base (`#nom-de-la-base`) et poser une question
-   sur le document.
-
-## 7. Brancher un outil de code (OpenAI-compatible)
-
-SGLang expose une API OpenAI sur le LAN — utilisable par Pi, omp, ou tout
-client OpenAI :
+Sur le serveur 48 Go, le premier démarrage vLLM charge les poids (long) :
 
 ```bash
-export OPENAI_BASE_URL=http://<ip>:30000/v1
-export OPENAI_API_KEY=sglang              # mettre la valeur de sglang_api_key si défini
+ssh root@192.0.2.10
+docker logs -f vllm
+curl -s http://127.0.0.1:8000/v1/models
+```
+
+## 6. Premier chat
+
+1. Ouvrir `http://192.0.2.11:8080`.
+2. Créer le premier compte (admin), puis fermer l'inscription dans le panneau
+   admin.
+3. Le modèle `qwen3.8-27b` est exposé par LiteLLM ; discuter.
+
+## 7. RAG : indexer un document
+
+1. **Espace de travail → Base de connaissances** → créer.
+2. Uploader un PDF : Docling l'analyse, LiteLLM route les embeddings vers vLLM.
+3. Dans un chat, mentionner la base (`#nom-de-la-base`) et poser une question.
+
+## 8. Brancher un outil de code
+
+LiteLLM est le seul endpoint public :
+
+```bash
+export OPENAI_BASE_URL=http://192.0.2.10:4000/v1
+export OPENAI_API_KEY=<litellm_master_key>
 export OPENAI_MODEL=qwen3.8-27b
 ```
 
 ```bash
-curl -s http://<ip>:30000/v1/chat/completions \
+curl -s $OPENAI_BASE_URL/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Salut !"}]}' | jq -r '.choices[0].message.content'
+  -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Salut !"}]}' \
+  | jq -r '.choices[0].message.content'
 ```
+
+Ne jamais pointer un client directement sur `:8000` (vLLM) : il n'est pas
+exposé au LAN.
 
 ## La suite
 
-- Budget mémoire / réglages SGLang (RTX PRO 5000 48 GB) : [README](README.md).
-- Détails du déploiement airgap : [README](README.md#déploiement-airgap).
+- Profil VRAM, DFlash2/NVFP4 et limites : [README](README.md).
+- Hôte Proxmox : [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md).
+- Airgap : [docs/AIRGAP.md](docs/AIRGAP.md).

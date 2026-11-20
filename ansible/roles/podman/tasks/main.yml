@@ -1,12 +1,20 @@
 ---
 
+# The front VM is Podman-only. Remove the Docker CLI compatibility packages
+# that may have been installed by an older revision of this role.
+- name: Remove Docker compatibility packages (front VM is Podman-only)
+  ansible.builtin.apt:
+    name:
+      - podman-docker
+      - docker-compose-v2
+    state: absent
+  failed_when: false
+
 - name: Install Podman and rootless container dependencies
   ansible.builtin.apt:
     name:
       - podman
-      - podman-docker
       - podman-compose
-      - docker-compose-v2
       - uidmap
       - slirp4netns
       - fuse-overlayfs

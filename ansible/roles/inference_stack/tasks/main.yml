@@ -1,0 +1,106 @@
+---
+- name: Assert that a LiteLLM master key is configured
+  ansible.builtin.assert:
+    that:
+      - litellm_master_key is defined
+      - litellm_master_key | length >= 16
+      - litellm_master_key is not search('change-me|CHANGE-ME')
+    fail_msg: >-
+      litellm_master_key must be set to a strong value in group_vars/all.yml
+      (openssl rand -hex 32).
+
+- name: Create the inference stack directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "{{ inference_stack_root }}"
+    - "{{ inference_stack_compose_dir }}"
+    - "{{ inference_stack_litellm_dir }}"
+    - "{{ inference_stack_hf_cache_dir }}"
+
+- name: Deploy the Docker Compose stack
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ inference_stack_compose_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy the LiteLLM model routing configuration
+  ansible.builtin.template:
+    src: litellm-config.yaml.j2
+    dest: "{{ inference_stack_litellm_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy the LiteLLM master key environment file
+  ansible.builtin.template:
+    src: litellm.env.j2
+    dest: "{{ inference_stack_litellm_dir }}/litellm.env"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Load the LiteLLM image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "docker load -i {{ vllm_bundle_dir }}/images/litellm.tar"
+  changed_when: false
+  when: vllm_offline | bool
+
+- name: Load the vLLM image from the bundle (airgap)
+  ansible.builtin.command:
+    cmd: "docker load -i {{ vllm_bundle_dir }}/images/vllm.tar"
+  changed_when: false
+  when:
+    - vllm_offline | bool
+    - vllm_start | bool
+
+- name: Validate the Docker Compose configuration
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ inference_stack_compose_dir }}/compose.yaml config --quiet"
+  changed_when: false
+
+- name: Compute the compose up command
+  ansible.builtin.set_fact:
+    inference_stack_up_command: >-
+      docker compose -f {{ inference_stack_compose_dir }}/compose.yaml up -d
+      {{ 'litellm' if not (vllm_start | bool) else '' }}
+      {{ '--pull never' if (vllm_offline | bool) else '' }}
+
+- name: Start the inference stack
+  ansible.builtin.command:
+    cmd: "{{ inference_stack_up_command }}"
+  changed_when: false
+
+- name: Wait for the LiteLLM port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ litellm_port }}"
+    delay: 2
+    timeout: 90
+
+- name: Wait for the LiteLLM proxy to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ litellm_port }}/health/liveliness"
+    status_code: 200
+    timeout: 3
+  register: inference_stack_litellm_health
+  until: inference_stack_litellm_health.status | default(0) == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Show the inference endpoints
+  ansible.builtin.debug:
+    msg:
+      - "LiteLLM (LAN): http://{{ ansible_host }}:{{ litellm_port }}/v1"
+      - "vLLM debug (LXC localhost only): http://127.0.0.1:8000/v1"
+      - "vLLM started: {{ vllm_start | bool }}"
+      - >-
+        {{ 'vLLM embedding: http://vllm-embedding:' ~ vllm_embedding_port ~ '/v1'
+           if (vllm_embedding_enabled | bool) else 'vLLM embedding: disabled' }}

@@ -1,12 +1,32 @@
 ---
-- name: Provision and configure LLM inference VM environment
-  hosts: all
+- name: Configure the inference LXC (vLLM + LiteLLM + embedding)
+  hosts: inference_lxc
+  become: true
+  roles:
+    - role: airgap
+      when: airgap_mode | default(false)
+    - role: system_timezone
+      vars:
+        system_timezone_manage_ntp: false
+    - lxc_base
+    - developer_config
+    - inference_user
+    - lxc_docker
+    - inference_stack
+
+  post_tasks:
+    - name: Inference LXC ready
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }} is ready"
+          - "LiteLLM: http://{{ ansible_host }}:{{ litellm_port }}/v1"
+          - "vLLM started: {{ vllm_start | bool }}"
+          - "GPU: nvidia-smi is validated by lxc_docker"
+
+- name: Configure the front VM (Open WebUI + Docling, no GPU)
+  hosts: front_vm
   become: true
   pre_tasks:
-    - name: Default the inference account name when the deployment did not set it
-      ansible.builtin.set_fact:
-        inference_user: "{{ inference_user | default('inference') }}"
-
     - name: Wait for cloud-init to finish its initial setup
       ansible.builtin.wait_for:
         path: /var/lib/cloud/instance/boot-finished
@@ -23,10 +43,6 @@
     - inference_user
     - podman
     - firewall
-    - role: nvidia
-      when: nvidia_enabled | default(false)
-    - role: sglang
-      when: sglang_enabled | default(false)
     - role: docling
       when: docling_enabled | default(true)
     - role: open_webui
@@ -46,11 +62,10 @@
         - reboot_required_file.stat.exists
         - system_reboot_on_kernel_update | default(true)
 
-    - name: VM Ready for LLM inference
+    - name: Front VM ready
       ansible.builtin.debug:
         msg:
-          - "{{ inventory_hostname }} is ready!"
-          - "Admin access: ssh {{ ansible_user }}@{{ ansible_host }}"
-          - >-
-            Inference services account (non-admin, rootless Podman):
-            ssh {{ inference_user }}@{{ ansible_host }}
+          - "{{ inventory_hostname }} is ready"
+          - "Open WebUI: http://{{ ansible_host }}:8080"
+          - "LiteLLM backend: {{ litellm_base_url }}"
+          - "Docling: 127.0.0.1:5001 (internal)"

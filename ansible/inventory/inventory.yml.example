@@ -1,19 +1,24 @@
 ---
 all:
   children:
-    servers:
+    inference_lxc:
       hosts:
-        vm-llm-inference:
-          # IP assigned by OpenTofu (iac/outputs.tf → vm_ips)
-          ansible_host: 10.0.0.10
-      # Ubuntu 26.04 amd64 with internet; builds the airgap bundle (same cloud image as the VM).
+        llm-lxc:
+          # IP assigned by OpenTofu (iac/outputs.tf -> lxc_ip)
+          ansible_host: 192.0.2.10
+          ansible_user: root
+    front_vm:
+      hosts:
+        llm-webui:
+          # IP assigned by OpenTofu (iac/outputs.tf -> front_vm_ip)
+          ansible_host: 192.0.2.11
+          ansible_user: ubuntu
     bundle_builder:
       hosts:
         bundle-builder:
-          ansible_host: 10.0.0.20
+          # Ubuntu 26.04 amd64 with internet; builds the airgap bundle.
+          ansible_host: 192.0.2.20
           ansible_user: ubuntu
   vars:
-    # Cloud-Init user created by OpenTofu (iac/variables.tf → vm_user)
-    ansible_user: ubuntu
     ansible_python_interpreter: /usr/bin/python3
     # ansible_ssh_private_key_file: ~/.ssh/id_ed25519

@@ -1,0 +1,118 @@
+name: llm
+
+services:
+  vllm:
+    image: "{{ vllm_image }}"
+    container_name: vllm
+    runtime: nvidia
+    restart: unless-stopped
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      HF_HUB_OFFLINE: "{{ '1' if (vllm_offline | bool) else '0' }}"
+      HF_TOKEN: "{{ vllm_hf_token | default('') }}"
+    volumes:
+{% if vllm_offline | bool %}
+      - "{{ vllm_bundle_dir }}/models:/models:ro"
+{% else %}
+      - "{{ inference_stack_hf_cache_dir }}:/root/.cache/huggingface"
+{% endif %}
+    ports:
+      - "127.0.0.1:8000:8000"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    command:
+      - "--model"
+      - "{{ vllm_model_path }}"
+      - "--served-model-name"
+      - "{{ vllm_served_model_name }}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--trust-remote-code"
+      - "--gpu-memory-utilization"
+      - "{{ vllm_gpu_memory_utilization }}"
+      - "--max-model-len"
+      - "{{ vllm_max_model_len }}"
+      - "--kv-cache-dtype"
+      - "{{ vllm_kv_cache_dtype }}"
+      - "--attention-backend"
+      - "{{ vllm_attention_backend }}"
+      - "--max-num-seqs"
+      - "{{ vllm_max_num_seqs }}"
+      - "--max-num-batched-tokens"
+      - "{{ vllm_max_num_batched_tokens }}"
+      - "--speculative-config"
+      - '{{ {"method": vllm_speculative_method, "model": vllm_draft_model_path, "num_speculative_tokens": vllm_speculative_num_tokens} | to_json }}'
+{% if vllm_reasoning_parser %}
+      - "--reasoning-parser"
+      - "{{ vllm_reasoning_parser }}"
+{% endif %}
+{% if vllm_tool_call_parser %}
+      - "--tool-call-parser"
+      - "{{ vllm_tool_call_parser }}"
+      - "--enable-auto-tool-choice"
+{% endif %}
+{% if vllm_enforce_eager | bool %}
+      - "--enforce-eager"
+{% endif %}
+
+{% if vllm_embedding_enabled | bool %}
+  vllm-embedding:
+    image: "{{ vllm_image }}"
+    container_name: vllm-embedding
+    runtime: nvidia
+    restart: unless-stopped
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      HF_HUB_OFFLINE: "{{ '1' if (vllm_offline | bool) else '0' }}"
+      HF_TOKEN: "{{ vllm_hf_token | default('') }}"
+    volumes:
+{% if vllm_offline | bool %}
+      - "{{ vllm_bundle_dir }}/models:/models:ro"
+{% else %}
+      - "{{ inference_stack_hf_cache_dir }}:/root/.cache/huggingface"
+{% endif %}
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    command:
+      - "--model"
+      - "{{ vllm_embedding_model_path }}"
+      - "--served-model-name"
+      - "{{ vllm_embedding_served_model_name }}"
+      - "--runner"
+      - "pooling"
+      - "--convert"
+      - "embed"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "{{ vllm_embedding_port }}"
+      - "--trust-remote-code"
+      - "--gpu-memory-utilization"
+      - "{{ vllm_embedding_gpu_memory_utilization }}"
+      - "--max-model-len"
+      - "{{ vllm_embedding_max_model_len }}"
+{% endif %}
+
+  litellm:
+    image: "{{ litellm_image }}"
+    container_name: litellm
+    restart: unless-stopped
+    env_file:
+      - "{{ inference_stack_litellm_dir }}/litellm.env"
+    volumes:
+      - "{{ inference_stack_litellm_dir }}/config.yaml:/app/config.yaml:ro"
+    ports:
+      - "{{ litellm_port }}:{{ litellm_port }}"
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "{{ litellm_port }}"
+      - "--host"
+      - "0.0.0.0"

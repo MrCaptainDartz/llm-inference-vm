@@ -320,10 +320,10 @@ ports publiés par Docker. La frontière réseau reste le firewall Proxmox
 - une liste `lxc_security_fail2ban_ignore_cidrs` dans
   `ansible/group_vars/all.yml` pour exclure un réseau/site du ban
   (ex. `["192.0.2.0/24"]`) ;
-`auditd` n'est **pas** inclus dans le LXC : dans un LXC non privilégié, le
+`auditd` n'est **pas** inclus dans ce projet : dans un LXC non privilégié, le
 noyau refuse `set-pid`/`set-enable` (l'audit n'est pas namespacé), même avec
-`cap_audit_control` visible. Pour auditd, il faut le faire tourner sur l'hôte
-Proxmox (kernel `audit=1`) ou dans une VM privilégiée.
+`cap_audit_control` visible. On reste sur `fail2ban` + le firewall Proxmox ;
+pas d'auditd sur l'hôte.
 
 Le LXC garde SSH key-only, et les conteneurs ont `no-new-privileges` +
 `pids_limit`.

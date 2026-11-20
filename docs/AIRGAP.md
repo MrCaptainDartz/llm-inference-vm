@@ -176,7 +176,7 @@ Ce que font les rôles en mode airgap :
 - `airgap` : bascule apt sur `file:///airgap-bundle/repo` et désactive les
   sources réseau ;
 - `lxc_base` / `lxc_security` / `lxc_docker` : installent depuis le repo local
-  (dont `fail2ban` ; auditd n'est pas utilisable dans un LXC non privilégié) ;
+  (dont `fail2ban` ; auditd non retenu) ;
 - `lxc_docker` : installe Docker + toolkit, force `no-cgroups=true`, charge
   `images/cuda-smoke.tar`, teste `nvidia-smi` dans un conteneur ;
 - `inference_stack` :

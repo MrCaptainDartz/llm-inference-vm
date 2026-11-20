@@ -1,7 +1,6 @@
 ---
 # Lightweight LXC hardening: fail2ban with temporary bans only.
-# auditd cannot run in an unprivileged LXC (set-pid/set-enable is refused);
-# use host auditd (kernel audit=1) or a privileged VM if needed.
+# auditd is not included: an unprivileged LXC cannot set-pid/set-enable.
 
 lxc_security_fail2ban_enabled: true
 lxc_security_fail2ban_bantime: "1h"

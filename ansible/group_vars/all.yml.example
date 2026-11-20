@@ -1,57 +1,47 @@
 ---
-# Copy to 'all.yml' (gitignored — may hold environment-specific or sensitive values) and fill in your values.
+# Copy to all.yml (gitignored) and fill in the values.
 
-# --- Inference LXC account (non-admin) ---
 inference_user: "inference"
 ssh_allow_tcp_forwarding: false
 
-# --- System ---
 system_timezone_value: "Europe/Paris"
 
-# --- LXC security (fail2ban) ---
-# CIDRs that must never be banned by fail2ban.
-# lxc_security_fail2ban_ignore_cidrs: ["192.0.2.0/24"]
+# fail2ban: temporary bans only.
 lxc_security_fail2ban_ignore_cidrs: []
-# Temporary bans only; bantime.increment is disabled in the jail.
 lxc_security_fail2ban_bantime: "1h"
 
-# --- LiteLLM proxy (master key, no database) ---
-# Generate with: openssl rand -hex 32
+# LiteLLM; generate the key with: openssl rand -hex 32.
 litellm_master_key: "CHANGE-ME-openssl-rand-hex-32"
 litellm_port: 4000
 litellm_image: "ghcr.io/berriai/litellm:main-stable"
-# For the Open WebUI compose on your existing Docker VM:
+# Open WebUI compose (existing Docker VM).
 litellm_base_url: "http://192.0.2.10:4000/v1"
 
-# --- Inference LXC: vLLM chat ---
+# vLLM chat; airgap_mode selects the bundle model paths.
 vllm_image: "vllm/vllm-openai:v0.34.0"
 vllm_served_model_name: "qwen3.8-27b"
-# Online: Hugging Face repo. Airgap: bundle directory under /models.
 vllm_model_path: "{{ '/models/qwen3.8-27b-nvfp4' if (airgap_mode | default(false)) else 'unsloth/Qwen3.8-27B-NVFP4' }}"
 vllm_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode | default(false)) else 'maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal' }}"
-# DFlash2 draft: num_speculative_tokens = block_size - 1 (drafter block_size = 8).
+# DFlash2 drafter block size is 8, so 7 speculative tokens.
 vllm_speculative_method: "dflash"
 vllm_speculative_num_tokens: 7
-# 0.78 when Docling uses the GPU (layout/table models); 0.82 otherwise.
-# The role computes this automatically from docling_gpu; override only if needed.
-# vllm_gpu_memory_utilization: "0.78"
 vllm_max_model_len: 262144
 vllm_kv_cache_dtype: "nvfp4"
 vllm_attention_backend: "flash_attn"
 vllm_max_num_seqs: 4
 vllm_max_num_batched_tokens: 32768
-# Qwen3.8/DFlash2/Embedding do not need custom modeling code; keep false.
+# Keep false unless the model ships custom modeling code.
 vllm_trust_remote_code: false
-# sm120/NVFP4 known workaround: set true if CUDA illegal instruction during decode.
+# sm120/NVFP4 workaround for a CUDA illegal instruction.
 vllm_enforce_eager: false
 vllm_reasoning_parser: "qwen3"
 vllm_tool_call_parser: "qwen3_coder"
 vllm_enable_auto_tool_choice: true
-# Start vLLM. Keep false on a host without the 48 GB GPU (pve-node1).
+# false on hosts without the 48 GB GPU.
 vllm_start: true
 vllm_hf_token: ""
 
-# --- Inference LXC: vLLM embedding (RAG, exposed through LiteLLM) ---
+# vLLM embedding for RAG.
 vllm_embedding_enabled: true
 vllm_embedding_model_path: "{{ '/models/qwen3-embedding-0.6b' if (airgap_mode | default(false)) else 'Qwen/Qwen3-Embedding-0.6B' }}"
 vllm_embedding_served_model_name: "qwen3-embedding-0.6b"
@@ -59,33 +49,20 @@ vllm_embedding_gpu_memory_utilization: 0.06
 vllm_embedding_max_model_len: 32768
 vllm_embedding_port: 8001
 
-# --- Inference LXC: Docling (document parsing) ---
-# true = CUDA image + GPU layout/table models on the 48 GB host.
-# false = CPU image on pve-node1 (GPU 8 Go test host).
+# Docling; true on the 48 GB target, false uses the CPU image.
 docling_gpu: true
 docling_port: 5001
-# Generate with: openssl rand -hex 32. Must match the Open WebUI compose.
+# Must match DOCLING_API_KEY in deploy/openwebui/.env.
 docling_api_key: "CHANGE-ME-openssl-rand-hex-32"
 docling_enable_ui: false
-# For the Open WebUI compose (DOCLING_PARAMS):
-#   Tesseract (default, fastest, 0 VRAM):
-#     {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
-#   EasyOCR (better on rotated/noisy scans, ~1-2 GB VRAM if GPU, slower on CPU):
-#     {"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
-# table_mode=accurate is TableFormer accurate (CPU/GPU, not GPU-only).
-# In deploy/openwebui, ENABLE_PERSISTENT_CONFIG=false makes .env win over the UI.
+# Tesseract is fastest; easyocr handles noisy scans better.
 docling_ocr_preset: "tesseract"
 docling_ocr_lang: ["fr"]
-# For the Open WebUI compose:
+# Open WebUI compose (DOCLING_SERVER_URL).
 docling_url: "http://192.0.2.10:5001"
 
-# --- Docker GPU smoke test (nvidia-smi only, no model load) ---
+# Smoke-test Docker/NVIDIA with nvidia-smi only.
 docker_gpu_smoke_test: true
 docker_gpu_smoke_image: "nvidia/cuda:13.0.0-base-ubuntu24.04"
 
-# --- Airgap deployment ---
-# 1. Build on bundle_builder: scripts/fetch-airgap-bundle.sh
-# 2. Mount/transfer the bundle at llm_bundle_dir.
-# 3. Set airgap_mode: true and run playbook.yml.
-# airgap_mode: true
-# llm_bundle_dir: /airgap-bundle
+# Airgap: set airgap_mode: true and llm_bundle_dir: /airgap-bundle.

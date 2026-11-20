@@ -4,15 +4,14 @@ all:
     inference_lxc:
       hosts:
         llm-lxc:
-          # IP assigned by OpenTofu (iac/outputs.tf -> lxc_ip)
+          # IP assigned by OpenTofu (iac/outputs.tf -> lxc_ip).
           ansible_host: 192.0.2.10
           ansible_user: root
     bundle_builder:
       hosts:
         bundle-builder:
-          # Ubuntu 26.04 amd64 with internet; builds the airgap bundle.
+          # Online Ubuntu 26.04 host that builds the airgap bundle.
           ansible_host: 192.0.2.20
           ansible_user: ubuntu
   vars:
     ansible_python_interpreter: /usr/bin/python3
-    # ansible_ssh_private_key_file: ~/.ssh/id_ed25519

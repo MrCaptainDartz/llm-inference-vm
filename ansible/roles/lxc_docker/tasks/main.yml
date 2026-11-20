@@ -1,7 +1,5 @@
 ---
-# Docker (rootful) inside the unprivileged LXC, with the GPU exposed by the
-# Proxmox NVIDIA hook. The hook and cgroup devices are configured on the host
-# by scripts/proxmox-lxc-gpu.sh (docs/HOST-INSTALL.md).
+# Rootful Docker in the unprivileged LXC; the host hook injects the GPU.
 
 - name: Check the NVIDIA device nodes exposed by the Proxmox hook
   ansible.builtin.stat:
@@ -93,7 +91,7 @@
     state: present
     update_cache: "{{ not (lxc_docker_offline | bool) }}"
 
-# Unprivileged LXC: nvidia-container-cli cannot manage the device cgroup.
+# An unprivileged LXC cannot let nvidia-container-cli manage the device cgroup.
 - name: Configure the NVIDIA runtime for unprivileged LXC
   ansible.builtin.command:
     cmd: nvidia-ctk config --in-place --set nvidia-container-cli.no-cgroups=true

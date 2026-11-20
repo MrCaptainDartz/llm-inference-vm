@@ -1,7 +1,5 @@
 ---
-# vLLM chat + embedding, LiteLLM, and Docling in the inference LXC.
-# The vLLM services are only exposed on the compose network (plus 127.0.0.1
-# for debugging); LiteLLM and Docling are the LAN-facing services.
+# vLLM, LiteLLM, and Docling; only LiteLLM and Docling are LAN-facing.
 
 inference_stack_root: "/srv/llm"
 inference_stack_compose_dir: "/srv/llm/compose"
@@ -14,15 +12,14 @@ vllm_model_path: "{{ '/models/qwen3.8-27b-nvfp4' if (airgap_mode | default(false
 vllm_draft_model_path: "{{ '/models/qwen3.8-27b-dflash2-draft' if (airgap_mode | default(false)) else 'maurienne-ai/Qwen3.8-27B-DFlash2-NVFP4-RTNcal' }}"
 vllm_speculative_method: "dflash"
 vllm_speculative_num_tokens: 7
-# Docling GPU (layout/table models) needs VRAM: leave it more room.
+# Leave VRAM for Docling when it runs on the GPU.
 vllm_gpu_memory_utilization: "{{ '0.78' if (docling_gpu | default(false)) else '0.82' }}"
 vllm_max_model_len: 262144
 vllm_kv_cache_dtype: "nvfp4"
 vllm_attention_backend: "flash_attn"
 vllm_max_num_seqs: 4
 vllm_max_num_batched_tokens: 32768
-# Qwen3.8/DFlash2/Embedding are supported natively by the pinned vLLM.
-# Keep false; only enable for a model that really ships custom modeling code.
+# Keep false unless the model ships custom modeling code.
 vllm_trust_remote_code: false
 vllm_enforce_eager: false
 vllm_reasoning_parser: "qwen3"
@@ -30,7 +27,7 @@ vllm_tool_call_parser: "qwen3_coder"
 vllm_enable_auto_tool_choice: true
 vllm_hf_token: ""
 
-# false = deploy the stack but only start LiteLLM + Docling (no GPU model load).
+# false starts LiteLLM + Docling only, without loading vLLM.
 vllm_start: true
 
 vllm_offline: "{{ airgap_mode | default(false) }}"
@@ -43,7 +40,7 @@ vllm_embedding_gpu_memory_utilization: 0.06
 vllm_embedding_max_model_len: 32768
 vllm_embedding_port: 8001
 
-# Docling: CPU on a test host, CUDA on the 48 GB target.
+# Docling uses CUDA on the 48 GB target, CPU otherwise.
 docling_gpu: false
 docling_image: "{{ 'quay.io/docling-project/docling-serve-cu130:v1.38.2' if (docling_gpu | default(false)) else 'quay.io/docling-project/docling-serve:v1.38.2' }}"
 docling_port: 5001

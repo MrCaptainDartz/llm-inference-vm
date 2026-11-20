@@ -12,9 +12,9 @@ lxc_docker_nvidia_keyring: "/etc/apt/keyrings/nvidia-container-toolkit.gpg"
 lxc_docker_nvidia_key_fingerprint: "C95B321B61E88C1809C4F759DDCAE044F796ECB0"
 lxc_docker_nvidia_repo_uri: "https://nvidia.github.io/libnvidia-container/stable/deb/amd64/"
 
-# The airgap role already switched apt to the local bundle repository.
+# Airgap apt already points at the bundle repository.
 lxc_docker_offline: "{{ airgap_mode | default(false) }}"
 
-# nvidia-smi only: validates the Docker/NVIDIA stack without loading a model.
+# Smoke-test with nvidia-smi only; no model load.
 lxc_docker_gpu_smoke_test: "{{ docker_gpu_smoke_test | default(true) }}"
 lxc_docker_gpu_smoke_image: "{{ docker_gpu_smoke_image | default('nvidia/cuda:13.0.0-base-ubuntu24.04') }}"

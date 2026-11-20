@@ -23,7 +23,7 @@ lxc_base_packages:
   - procps
   - pciutils
 
-# The LXC is an appliance: root keeps key-only SSH for Ansible/ops.
+# Root SSH is key-only; Ansible manages the appliance.
 lxc_base_ssh_permit_root_login: "prohibit-password"
 lxc_base_ssh_password_authentication: "no"
 lxc_base_ssh_allow_tcp_forwarding: "{{ 'yes' if (ssh_allow_tcp_forwarding | default(false)) else 'no' }}"

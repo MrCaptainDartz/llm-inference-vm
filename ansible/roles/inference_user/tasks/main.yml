@@ -34,7 +34,7 @@
     mode: '0700'
     state: directory
 
-# All services run as systemd user units: the inference user needs no sudo.
+# Services run as systemd user units; no sudo rule is needed.
 - name: Remove the obsolete scoped sudoers rule
   ansible.builtin.file:
     path: "/etc/sudoers.d/{{ inference_user_name }}"
@@ -56,14 +56,14 @@
     path: "/home/{{ inference_user_name }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - Inference Environment"
     block: |
-      # D-Bus and XDG Runtime configuration for systemd user services
+      # D-Bus/XDG runtime for systemd user services.
       export XDG_RUNTIME_DIR="/run/user/$(id -u)"
       if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
         export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
       fi
 
       {% if inference_user_configure_podman_socket | default(false) %}
-      # Point Docker tools to the rootless Podman socket
+      # Rootless Podman socket (disabled by default).
       export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
       {% endif %}
 

@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
-#
-# Configure an unprivileged Proxmox LXC for NVIDIA CUDA + Docker:
-#   - Proxmox features required by Docker-in-LXC
-#   - NVIDIA LXC hook (user-space driver injection)
-#   - cgroup v2 device rules for the NVIDIA majors (detected dynamically)
-#   - 16 GiB /dev/shm
-#   - optional read-only bind mount of the airgap bundle at /airgap-bundle
-#
-# Run this on the Proxmox host as root, after the LXC exists:
-#   ./proxmox-lxc-gpu.sh 120
-#   ./proxmox-lxc-gpu.sh 120 --bundle /srv/airgap-bundle
-#
-# The host must already have the NVIDIA driver and nvidia-container-toolkit
-# installed (see docs/HOST-INSTALL.md). The LXC itself stays unprivileged.
-
+# Attach the host NVIDIA GPU to an unprivileged Proxmox LXC for Docker/CUDA.
+# Run as root on the Proxmox host; see --help and docs/HOST-INSTALL.md.
 set -euo pipefail
 
 usage() {
@@ -109,8 +96,7 @@ for dev in /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
     MAJORS["$major"]=1
   fi
 done
-# nvidia-caps (MIG capability nodes) is intentionally not passed: this stack
-# does not use MIG. Add its actual major manually if you enable MIG later.
+# MIG capability nodes are not passed; add the nvidia-caps major only for MIG.
 
 if [[ ${#MAJORS[@]} -eq 0 ]]; then
   echo "ERROR: no NVIDIA device found on the host; is the driver loaded?" >&2
@@ -123,9 +109,6 @@ for major in "${!MAJORS[@]}"; do
 done
 
 echo "==> Adding the NVIDIA LXC hook and environment"
-# Remove the old pre-start line, which exited 1 when /dev/nvidia0 already
-# existed and therefore made every LXC start fail. The replacement always
-# exits 0.
 OLD_PRE_START="lxc.hook.pre-start: sh -c '[ ! -f /dev/nvidia0 ] && /usr/bin/nvidia-modprobe -c0 -u'"
 if grep -Fqx -- "$OLD_PRE_START" "$CONF"; then
   awk -v old="$OLD_PRE_START" '$0 != old' "$CONF" > "${CONF}.tmp"

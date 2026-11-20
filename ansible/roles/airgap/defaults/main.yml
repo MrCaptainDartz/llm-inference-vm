@@ -1,6 +1,5 @@
 ---
-# Runs only when airgap_mode is true; bundle location on the VM (llm_bundle_dir).
+# Bundle path on the airgapped VM.
 airgap_bundle_dir: "{{ llm_bundle_dir | default('/airgap-bundle') }}"
-# Verify the whole bundle before touching apt. Disable only for a deliberately
-# partial/development bundle that has no SHA256SUMS.
+# Verify SHA256SUMS before changing apt.
 airgap_verify_checksums: true

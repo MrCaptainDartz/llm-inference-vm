@@ -1,33 +1,5 @@
 #!/usr/bin/env bash
-#
-# Build the offline bundle for the LLM inference stack.
-#
-# Run this on an ONLINE Ubuntu 26.04 amd64 builder. It downloads, at build time:
-#   - the latest stable NVIDIA .run driver (595.x branch, download.nvidia.com)
-#     and the NVIDIA container toolkit .debs
-#   - the Ubuntu 26.04 Proxmox LXC template
-#   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling (CUDA and CPU), PGVector
-#     and CUDA smoke images
-#   - the Hugging Face models (target, DFlash2 drafter, embedding)
-#   - the Ubuntu 26.04 apt closure for the inference LXC
-#   - the French Tesseract data (fra + fr)
-#   - a manifest.json with the resolved versions/digests
-#
-# The target Proxmox host does not need internet. See docs/AIRGAP.md and
-# docs/HOST-INSTALL.md for the installation steps.
-#
-# Usage:
-#   sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
-#
-# Useful env overrides:
-#   VLLM_VERSION=0.34.0
-#   NVIDIA_DRIVER_VERSION=595.104.02   # empty = latest stable 595.x
-#   HF_TOKEN=hf_...                   # gated Hugging Face models
-#   DOCLING_IMAGE=quay.io/docling-project/docling-serve-cu130:v1.38.2
-#   DOCLING_CPU_IMAGE=quay.io/docling-project/docling-serve:v1.38.2
-#   PGVECTOR_IMAGE=pgvector/pgvector:pg17
-#   TESSDATA_URL=https://github.com/tesseract-ocr/tessdata_fast/raw/main/fra.traineddata
-#
+# Build the offline bundle on an online Ubuntu 26.04 amd64 host.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -74,8 +46,8 @@ info() { printf '    %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
+Usage: sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
 
 Options:
   --output DIR          Bundle directory (default: <repo>/airgap-bundle)
@@ -92,6 +64,8 @@ Environment:
   NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest stable 595.x)
   HF_TOKEN               Hugging Face token for gated models
   VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/DOCLING_CPU_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
+
+See docs/AIRGAP.md for the full workflow.
 EOF
 }
 
@@ -120,9 +94,6 @@ TARGET_MODEL_URL="https://huggingface.co/api/models/${TARGET_MODEL}"
 DRAFT_MODEL_URL="https://huggingface.co/api/models/${DRAFT_MODEL}"
 EMBEDDING_MODEL_URL="https://huggingface.co/api/models/${EMBEDDING_MODEL}"
 
-# ---------------------------------------------------------------------------
-# Tools
-# ---------------------------------------------------------------------------
 install_tools() {
   local missing=()
   for cmd in curl jq python3 skopeo; do
@@ -147,9 +118,8 @@ install_tools() {
   command -v "$SKOPEO" >/dev/null || die "skopeo not available"
 }
 
-# Download to <dest>.part, then atomically rename after a successful curl.
-# The Hugging Face token is passed through a 0600 curl config file so it is
-# not visible in the process list.
+# Download to <dest>.part, then atomically rename after curl.
+# HF_TOKEN goes through a temporary 0600 curl config, not the process list.
 fetch_url() {
   local url="$1" dest="$2" part="${2}.part" auth_config=""
   local -a curl_args=()
@@ -192,16 +162,12 @@ skopeo_image() {
     "docker://${image}" "docker-archive:${tar}:${image}"
 }
 
-# ---------------------------------------------------------------------------
-# Host artifacts: NVIDIA driver/toolkit, LXC template, cloud image
-# ---------------------------------------------------------------------------
 fetch_nvidia_driver() {
   log "NVIDIA driver"
   local version="$NVIDIA_DRIVER_VERSION"
   if [[ -z "$version" ]]; then
     local latest
-    # download.nvidia.com tracks the stable branch (currently 595.x); the
-    # us.download.nvidia.com alias can serve the newer feature branch.
+    # download.nvidia.com tracks the stable 595.x branch.
     latest=$(curl -fsSL --max-time 20 https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt) \
       || die "cannot resolve the latest stable NVIDIA driver"
     version=$(awk '{print $1}' <<<"$latest" | tr -d '\r')
@@ -267,9 +233,6 @@ fetch_host_images() {
   fetch_url "$LXC_TEMPLATE_URL" "${BUNDLE_DIR}/host/${LXC_TEMPLATE_FILENAME}"
 }
 
-# ---------------------------------------------------------------------------
-# Container images
-# ---------------------------------------------------------------------------
 fetch_images() {
   log "Container images"
   mkdir -p "${BUNDLE_DIR}/images"
@@ -282,9 +245,6 @@ fetch_images() {
   skopeo_image "$CUDA_SMOKE_IMAGE" cuda-smoke
 }
 
-# ---------------------------------------------------------------------------
-# Hugging Face models
-# ---------------------------------------------------------------------------
 fetch_hf_model() {
   local repo="$1" dir="$2" api_url="$3"
   log "Hugging Face model: ${repo}"
@@ -309,9 +269,6 @@ fetch_models() {
   fetch_hf_model "$EMBEDDING_MODEL" "$EMBEDDING_MODEL_DIR" "$EMBEDDING_MODEL_URL"
 }
 
-# ---------------------------------------------------------------------------
-# Ubuntu apt closure for the inference LXC (Docker rootful, no Podman)
-# ---------------------------------------------------------------------------
 APT_PACKAGES=(
   openssh-server sudo python3 ca-certificates curl gnupg jq
   vim nano git htop rsync less unzip zstd acl
@@ -342,8 +299,6 @@ build_apt_repo() {
       echo "Packages: $(zcat Packages.gz | grep -c "^Package:")"
     '
 
-  # The NVIDIA toolkit debs are distro-agnostic; make them visible to the LXC
-  # through the same local repository.
   local nvdir="${BUNDLE_DIR}/host/nvidia-container-toolkit"
   if compgen -G "${nvdir}/*.deb" >/dev/null; then
     cp -f "${nvdir}"/*.deb "${BUNDLE_DIR}/repo/pool/"
@@ -354,9 +309,6 @@ build_apt_repo() {
   info "apt repo: ${BUNDLE_DIR}/repo/Packages.gz"
 }
 
-# ---------------------------------------------------------------------------
-# French Tesseract data (Docling's Tesseract preset expects fr/fra)
-# ---------------------------------------------------------------------------
 fetch_tessdata() {
   log "French Tesseract data"
   mkdir -p "${BUNDLE_DIR}/tessdata"
@@ -365,9 +317,6 @@ fetch_tessdata() {
   info "Tesseract: fra.traineddata + fr.traineddata"
 }
 
-# ---------------------------------------------------------------------------
-# Manifest
-# ---------------------------------------------------------------------------
 write_manifest() {
   log "Writing manifest"
   local nvidia_driver=""
@@ -458,9 +407,7 @@ write_manifest() {
   info "manifest: ${BUNDLE_DIR}/manifest.json"
 }
 
-# Integrity manifest for transfer/media verification. This is not a signature:
-# it protects against truncation/corruption, while the bundle itself remains
-# trusted as a whole.
+# SHA256SUMS detects transfer corruption; it is not a signature.
 write_checksums() {
   log "Writing SHA256SUMS"
   (
@@ -472,9 +419,6 @@ write_checksums() {
   info "checksums: ${BUNDLE_DIR}/SHA256SUMS"
 }
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 install_tools
 mkdir -p "${BUNDLE_DIR}"/{host,images,models,repo/pool,tessdata}
 

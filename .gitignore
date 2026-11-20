@@ -6,11 +6,18 @@
 crash.log
 crash.*.log
 
-# .tfvars files may contain secrets and change per environment - do not commit
+# Secrets; never commit.
 *.tfvars
 *.tfvars.json
+ansible/*.key
+ansible/*.token
+ansible/*.pem
+ansible/files/*.key
+ansible/files/*.pub
+ansible/files/*.token
+ansible/files/*.pem
+ansible/output/
 
-# Override files are local-only and not checked in
 override.tf
 override.tf.json
 *_override.tf
@@ -24,27 +31,17 @@ terraform.rc
 .terraform.lock.hcl
 !iac/.terraform.lock.hcl
 
-# Ansible — environment-specific files
+# Environment-specific.
 ansible/inventory/inventory.yml
 ansible/group_vars/all.yml
-
-# Ansible — possible secrets
-ansible/*.key
-ansible/*.token
-ansible/*.pem
-ansible/files/*.key
-ansible/files/*.pub
-ansible/files/*.token
-ansible/files/*.pem
-ansible/output/
 
 __pycache__/
 *.pyc
 
-# Airgap bundle (built by playbook-download.yml, tens of GB)
+# Built bundle (tens of GB).
 airgap-bundle/*
 !airgap-bundle/.gitkeep
-# Open WebUI compose (existing Docker VM) — local secrets
+
+# Local secrets and backups.
 deploy/openwebui/.env
-# Local pg_dump backups; initdb/01-vector.sql is intentionally tracked.
 deploy/openwebui/*.sql

@@ -2,5 +2,5 @@
 inference_user_name: "{{ inference_user | default('inference') }}"
 inference_user_ssh_keys: "{{ inference_ssh_keys | default([]) }}"
 
-# The inference LXC uses Docker (rootful), not a rootless Podman socket.
+# Docker is rootful here; do not point it at a rootless Podman socket.
 inference_user_configure_podman_socket: false

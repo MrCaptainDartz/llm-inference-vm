@@ -1,15 +1,5 @@
-# ---------------------------------------------------------------------------
-# Inference LXC (vLLM + LiteLLM + Docling)
-#
-# The GPU is owned by the Proxmox host and exposed to the unprivileged LXC by
-# the Proxmox NVIDIA hook (lxc.hook.mount: /usr/share/lxc/hooks/nvidia). The
-# hook lines are added after creation by scripts/proxmox-lxc-gpu.sh; they are
-# not expressible through the bpg provider with a non-root API token.
-#
-# The front end (Open WebUI + PostgreSQL/pgvector) runs on the user's existing
-# Docker VM with deploy/openwebui/docker-compose.yml. It is not managed here.
-# ---------------------------------------------------------------------------
-
+# Inference LXC for vLLM, LiteLLM, and Docling.
+# The GPU hook is added post-create by scripts/proxmox-lxc-gpu.sh; Open WebUI runs elsewhere.
 resource "proxmox_download_file" "ubuntu_lxc_template" {
   count               = var.ubuntu_lxc_template_preuploaded ? 0 : 1
   content_type        = "vztmpl"
@@ -36,8 +26,7 @@ resource "proxmox_virtual_environment_container" "inference" {
     nesting = var.lxc_enable_nesting
   }
 
-  # keyctl/fuse/mknod are added by scripts/proxmox-lxc-gpu.sh with root
-  # (the API token cannot change them). Never let Terraform remove them.
+  # Keep features added by scripts/proxmox-lxc-gpu.sh (the API token cannot change them).
   lifecycle {
     ignore_changes = [features]
   }

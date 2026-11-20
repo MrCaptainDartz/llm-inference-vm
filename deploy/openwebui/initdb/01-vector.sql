@@ -1,3 +1,2 @@
--- Open WebUI uses this PostgreSQL instance as both its application DB and
--- its PGVector backend.
+-- Application DB and PGVector backend in one PostgreSQL instance.
 CREATE EXTENSION IF NOT EXISTS vector;

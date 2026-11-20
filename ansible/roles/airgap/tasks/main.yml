@@ -1,6 +1,4 @@
 ---
-# Switches apt to the bundle's local repository: no network source remains.
-
 - name: Assert the bundle repository is present
   ansible.builtin.stat:
     path: "{{ airgap_bundle_dir }}/repo/Packages.gz"

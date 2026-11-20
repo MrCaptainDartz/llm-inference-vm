@@ -33,8 +33,7 @@
     - "{{ inference_stack_hf_cache_dir }}"
     - "{{ docling_tessdata_dir }}"
 
-# Docling's Tesseract preset looks for fr.traineddata (ISO), while Tesseract
-# names the French model fra.traineddata. Provide both local files.
+# Docling expects fr.traineddata; Tesseract ships the model as fra.traineddata.
 - name: Download the French Tesseract data (online)
   ansible.builtin.get_url:
     url: "{{ docling_tessdata_url }}"

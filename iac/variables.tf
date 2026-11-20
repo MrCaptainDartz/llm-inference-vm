@@ -1,5 +1,3 @@
-# --- Provider / API Proxmox ---
-
 variable "proxmox_api_url" {
   type        = string
   description = "URL of the Proxmox API (e.g., https://192.0.2.1:8006/api2/json)"
@@ -23,8 +21,6 @@ variable "proxmox_insecure" {
   default     = false
 }
 
-# --- Proxmox node / storage ---
-
 variable "vm_node_name" {
   type        = string
   description = "Proxmox node on which the inference LXC is created"
@@ -41,8 +37,6 @@ variable "template_datastore_id" {
   description = "Directory-type datastore for the Ubuntu LXC template (must support vztmpl content)"
   default     = "local"
 }
-
-# --- LXC: inference (vLLM + LiteLLM + Docling) ---
 
 variable "lxc_id" {
   type        = number
@@ -110,8 +104,6 @@ variable "start_on_boot" {
   default     = true
 }
 
-# --- Network ---
-
 variable "network_bridge" {
   type        = string
   description = "Proxmox bridge for the LXC (e.g. vmbr0)"
@@ -148,8 +140,6 @@ variable "dns_servers" {
   default     = []
 }
 
-# --- Images / templates ---
-
 variable "ubuntu_lxc_template_url" {
   type        = string
   description = "URL of the Ubuntu 26.04 LXC template"
@@ -184,8 +174,6 @@ variable "ubuntu_lxc_template_preuploaded" {
   description = "Airgapped Proxmox: use an existing <template_datastore_id>:vztmpl/<ubuntu_lxc_template_filename> instead of downloading it."
   default     = false
 }
-
-# --- Access ---
 
 variable "ssh_public_key" {
   type        = string

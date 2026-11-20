@@ -14,7 +14,8 @@ De zéro à une stack d'inférence LLM sur Proxmox, avec :
   ([docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
 - Poste de pilotage : `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
   `community.general`, une clé SSH.
-- Une VM Docker existante pour Open WebUI + PGVector.
+- Une VM Docker existante pour Open WebUI + PGVector (Docker Engine 24+,
+  Compose v2, ~4 Go RAM, accès aux ports 4000/5001 du LXC).
 - Airgap : un builder Ubuntu 26.04 amd64 avec internet.
 
 ```bash

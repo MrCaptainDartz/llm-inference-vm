@@ -59,9 +59,14 @@ Ports LAN : `8080` (Open WebUI), `4000` (LiteLLM), `5001` (Docling).
   avec `lxc-pve 7.0.0`).
 - Driver NVIDIA + `nvidia-container-toolkit` sur l'hôte
   ([docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
+- Dépôts Debian/PVE locaux (`main contrib non-free non-free-firmware`) sur le
+  PVE airgap : ils fournissent `dkms`, `build-essential` et les headers du
+  kernel ; le bundle ne les duplique pas.
 - Poste de pilotage : `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
   `community.general`, une clé SSH.
-- Une VM Docker existante pour Open WebUI + PGVector.
+- Une VM Docker existante avec **Docker Engine 24+ / Compose v2**, ~4 Go RAM,
+  ~20 Go libres, et un accès réseau aux ports `4000`/`5001` du LXC
+  ([deploy/openwebui/README.md](deploy/openwebui/README.md)).
 - Pour l'airgap : un builder Ubuntu 26.04 amd64 avec internet
   ([docs/AIRGAP.md](docs/AIRGAP.md)).
 
@@ -299,6 +304,10 @@ déployer Open WebUI/PGVector sur la VM Docker via les images
 `open_webui.tar`/`pgvector.tar`. Détails et layout :
 [docs/AIRGAP.md](docs/AIRGAP.md). Le script résout les dernières versions au
 build et écrit `manifest.json` (images/digests, modèles, driver, Tesseract).
+Il ne duplique pas les paquets Debian/PVE de l'hôte (`dkms`, `build-essential`,
+`proxmox-headers-$(uname -r)`) : ils viennent de tes dépôts locaux. Le driver
+stable 595.x (`download.nvidia.com`), le toolkit NVIDIA, le template LXC, les
+images, les modèles et la closure Ubuntu du LXC sont dans le bundle.
 
 ## Opérations
 

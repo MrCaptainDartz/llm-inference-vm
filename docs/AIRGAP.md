@@ -7,6 +7,18 @@ Le script `scripts/fetch-airgap-bundle.sh` remplace l'ancien rôle Ansible
 `bundle_download`. Il résout les dernières versions au moment du build et
 écrit un `manifest.json` avec les versions/digests exacts.
 
+Les paquets Debian/PVE de l'hôte (`dkms`, `build-essential`,
+`proxmox-headers-$(uname -r)`, etc.) ne sont **pas** dans le bundle : ils sont
+dans tes dépôts Debian/PVE locaux sur le PVE airgap. Le bundle ne contient que
+ce qui n'y est pas (driver `.run`, toolkit NVIDIA, template LXC, images,
+modèles HF, tessdata, closure apt Ubuntu du LXC).
+
+Le build doit tourner sur **Ubuntu 26.04** : il utilise `apt`, `dpkg`, `skopeo`
+et un conteneur Ubuntu. Ansible (`ansible/playbook-download.yml`) sert à
+piloter ce builder depuis ton poste (Mac inclus) via SSH ; il ne remplace pas
+Ubuntu pour le build. Pour builder depuis macOS sans machine Ubuntu, il faut
+une VM/container Linux.
+
 ## 1. Construire le bundle (machine en ligne)
 
 Sur un builder **Ubuntu 26.04 amd64** avec internet :
@@ -20,8 +32,9 @@ sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
 Le script installe les outils manquants (`curl`, `jq`, `python3`, `skopeo`,
 `podman`/`docker`). Il télécharge :
 
-- **host/** : dernier driver NVIDIA `.run`, `.deb` du NVIDIA Container Toolkit,
-  template LXC Ubuntu 26.04, `NVIDIA_DRIVER_VERSION` ;
+- **host/** : dernier driver NVIDIA stable de la branche 595 (`.run`,
+  `download.nvidia.com`), `.deb` du NVIDIA Container Toolkit, template LXC
+  Ubuntu 26.04, `NVIDIA_DRIVER_VERSION` ;
 - **images/** :
   - `vllm.tar` — `vllm/vllm-openai:v0.34.0` (CUDA 13)
   - `litellm.tar` — `ghcr.io/berriai/litellm:main-stable`
@@ -234,8 +247,11 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
   exactement quelles images/modèles sont installés.
 - Les images `open-webui:v0.13.4` et `pgvector/pgvector:pg17` sont épinglées ;
   `litellm:main-stable` est résolue au build et conservée dans le tarball.
-- Le script prend par défaut le **dernier** driver NVIDIA. Si le kernel PVE
-  n'est pas encore supporté par DKMS, épingler une version connue bonne.
+- Le script prend par défaut le **dernier driver stable 595.x** via
+  `https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt` (actuellement
+  595.112.07). Si le kernel PVE n'est pas encore supporté par DKMS, épingler
+  `NVIDIA_DRIVER_VERSION=595.104.02` (validé sur pve-node1). Le driver 620.x de
+  `us.download.nvidia.com` n'est pas utilisé par défaut.
 - Tesseract est le moteur OCR par défaut (CPU, 0 VRAM, le plus rapide).
   EasyOCR est disponible pour les scans inversés/bruités ; sur le site 48 Go,
   il peut utiliser le GPU (~1-2 GB VRAM) et Tesseract reste à 0 VRAM.

@@ -3,7 +3,8 @@
 # Build the offline bundle for the LLM inference stack.
 #
 # Run this on an ONLINE Ubuntu 26.04 amd64 builder. It downloads, at build time:
-#   - the latest NVIDIA .run driver and the NVIDIA container toolkit .debs
+#   - the latest stable NVIDIA .run driver (595.x branch, download.nvidia.com)
+#     and the NVIDIA container toolkit .debs
 #   - the Ubuntu 26.04 Proxmox LXC template
 #   - the vLLM (CUDA), LiteLLM, Open WebUI, Docling (CUDA), PGVector and CUDA
 #     smoke images
@@ -20,7 +21,7 @@
 #
 # Useful env overrides:
 #   VLLM_VERSION=0.34.0
-#   NVIDIA_DRIVER_VERSION=595.104.02   # empty = latest
+#   NVIDIA_DRIVER_VERSION=595.104.02   # empty = latest stable 595.x
 #   HF_TOKEN=hf_...                   # gated Hugging Face models
 #   DOCLING_IMAGE=quay.io/docling-project/docling-serve-cu130:v1.38.2
 #   PGVECTOR_IMAGE=pgvector/pgvector:pg17
@@ -183,12 +184,14 @@ fetch_nvidia_driver() {
   local version="$NVIDIA_DRIVER_VERSION"
   if [[ -z "$version" ]]; then
     local latest
-    latest=$(curl -fsSL --max-time 20 https://us.download.nvidia.com/XFree86/Linux-x86_64/latest.txt) \
-      || die "cannot resolve the latest NVIDIA driver"
+    # download.nvidia.com tracks the stable branch (currently 595.x); the
+    # us.download.nvidia.com alias can serve the newer feature branch.
+    latest=$(curl -fsSL --max-time 20 https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt) \
+      || die "cannot resolve the latest stable NVIDIA driver"
     version=$(awk '{print $1}' <<<"$latest" | tr -d '\r')
   fi
   [[ -n "$version" ]] || die "empty NVIDIA driver version"
-  local url="https://us.download.nvidia.com/XFree86/Linux-x86_64/${version}/NVIDIA-Linux-x86_64-${version}.run"
+  local url="https://download.nvidia.com/XFree86/Linux-x86_64/${version}/NVIDIA-Linux-x86_64-${version}.run"
   fetch_url "$url" "${BUNDLE_DIR}/host/NVIDIA-Linux-x86_64-${version}.run"
   chmod +x "${BUNDLE_DIR}/host/NVIDIA-Linux-x86_64-${version}.run"
   echo "$version" > "${BUNDLE_DIR}/host/NVIDIA_DRIVER_VERSION"

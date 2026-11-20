@@ -3,6 +3,12 @@
 Ce document couvre la partie **manuelle** de l'hôte Proxmox : driver NVIDIA,
 toolkit, template LXC, hooks GPU, bind mount du bundle airgap.
 
+Le PVE cible existe déjà et est airgap : ce dépôt ajoute seulement le LXC
+(et les VM que tu crées à côté). Les dépôts Debian/PVE locaux
+(`main contrib non-free non-free-firmware`) sont supposés configurés ; ils
+fournissent `dkms`, `build-essential` et les headers du kernel. Le bundle ne
+duplique pas ces paquets.
+
 Le LXC reste **non privilégié**. Le GPU n'est pas passé en PCI/VFIO : le host
 garde le driver et le LXC reçoit les devices + les libs user-space via le hook
 NVIDIA de Proxmox.
@@ -13,7 +19,8 @@ via `deploy/openwebui/docker-compose.yml`. Ce repo ne crée plus de VM front.
 ## 1. Prérequis
 
 - Proxmox VE 9.2+ avec `lxc-pve >= 6.0.5` (`dpkg -l lxc-pve`).
-- `dkms`, `pve-headers`, `build-essential`.
+- Dépôts Debian/PVE locaux (`main contrib non-free non-free-firmware`).
+- `dkms`, `build-essential`, `proxmox-headers-$(uname -r)` depuis ces dépôts.
 - Un GPU NVIDIA visible sur l'hôte (`lspci`, `nvidia-smi`).
 - Le bundle airgap transféré sur l'hôte (voir `docs/AIRGAP.md`).
 - Un token API Proxmox et la clé SSH publique pour Terraform.
@@ -34,10 +41,14 @@ Le bundle contient `host/NVIDIA-Linux-x86_64-<version>.run` et
 ```bash
 cd /path/to/airgap-bundle/host
 apt update
-apt install -y dkms pve-headers build-essential
+apt install -y dkms build-essential "proxmox-headers-$(uname -r)"
 chmod +x NVIDIA-Linux-x86_64-*.run
 ./NVIDIA-Linux-x86_64-*.run --dkms --no-x-check --no-nouveau-check
 ```
+
+`pve-headers` est une méta transitionnelle ; `proxmox-headers-$(uname -r)`
+cible le kernel courant. Les deux viennent de tes dépôts PVE locaux, pas du
+bundle.
 
 Sélection interactive recommandée : pas de 32 bits, pas de X, DKMS = oui.
 
@@ -50,10 +61,11 @@ modprobe nvidia_uvm
 ls -l /dev/nvidia0 /dev/nvidia-uvm
 ```
 
-> Le script prend par défaut le **dernier** driver publié. Si le DKMS échoue
-> avec le kernel Proxmox, relance le builder avec une version connue bonne :
+> Le script prend par défaut le **dernier driver stable** de la branche 595
+> (`https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt`, actuellement
+> 595.112.07). La version `595.104.02` est celle validée sur `pve-node1`
+> (PVE 9.2.27, kernel 7.0). Si besoin, pin :
 > `NVIDIA_DRIVER_VERSION=595.104.02 ./scripts/fetch-airgap-bundle.sh`.
-> La version `595.104.02` est celle validée sur `pve-node1` (PVE 9.2.27, kernel 7.0).
 
 ## 3. NVIDIA Container Toolkit (hôte)
 
@@ -115,6 +127,14 @@ Le script :
 Il ne touche **pas** à `/dev/dri` : CUDA n'en a pas besoin, et un LXC
 non privilégié ne pourrait pas utiliser les nodes `0660 root:video` sans
 mapper les GID. Le script n'ajoute que les majors NVIDIA.
+
+### Firewall Proxmox
+
+Le LXC est créé avec `network_firewall = true`. Si le firewall Proxmox est
+actif, ouvre au minimum `22` (Ansible/SSH), `4000` (LiteLLM) et `5001`
+(Docling), ou passe `network_firewall = false` dans `terraform.tfvars`.
+Sans règle, `tofu apply` peut réussir mais Ansible/Open WebUI ne joindra pas
+le LXC.
 
 Vérifications :
 
@@ -213,8 +233,9 @@ dans l'UI ne survivent pas au redémarrage.
 
 Le compose inclut PostgreSQL 17 + pgvector pour la DB applicative **et** les
 vecteurs. `PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH=1024` correspond à
-Qwen3-Embedding-0.6B. Voir `deploy/openwebui/README.md` pour les backups,
-l'airgap et le dépannage.
+Qwen3-Embedding-0.6B. Voir `deploy/openwebui/README.md` pour les prérequis de
+la VM (Docker Engine + Compose v2, 4 Go RAM, accès aux ports 4000/5001), les
+backups, l'airgap et le dépannage.
 
 ## 8. Cible 48 Go
 

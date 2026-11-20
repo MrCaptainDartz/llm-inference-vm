@@ -12,6 +12,23 @@ VM, not on the Proxmox host:
 
 No Docling, vLLM, LiteLLM or model is downloaded on this VM.
 
+## VM prerequisites
+
+On your existing Docker VM, you only need Docker and this compose:
+
+- **Docker Engine 24+** with the **Compose v2 plugin** (`docker compose version`
+  must work; `docker-compose` v1 is not enough).
+- About **2 vCPU, 4 GB RAM and 20 GB free disk** for the two containers, the
+  PostgreSQL data and Open WebUI uploads. No GPU is required.
+- `openssl` (to generate the secrets) and `curl` (health checks).
+- Network access from the VM to the inference LXC on **TCP 4000** (LiteLLM) and
+  **TCP 5001** (Docling).
+- **TCP 8080** free, or a reverse proxy/TLS in front of it.
+
+If Docker is not installed yet, install Docker Engine + Compose v2 for your
+VM's distribution first; this repository only ships the compose stack. If
+Docker is already present, there is nothing else to install.
+
 ## Why PGVector
 
 Open WebUI officially maintains ChromaDB and PGVector. PGVector lets the same
@@ -155,6 +172,24 @@ docker compose up -d --pull never
 
 The compose references the same pinned tags (`open-webui:v0.13.4`,
 `pgvector/pgvector:pg17`). No registry access is needed.
+
+## Validation performed (dev)
+
+The stack was started on the inference LXC (Docker 29.1.3, Compose 2.40.3) with
+the exact compose and `.env` from this directory, then removed:
+
+- Open WebUI `v0.13.4` + `pgvector/pgvector:pg17`: migrations completed,
+  `/health` returned `200`, `\dx vector` reported pgvector `0.8.7`.
+- Admin signup returned `200`; `/api/models` returned `qwen3.8-27b` and
+  `qwen3-embedding-0.6b` through LiteLLM.
+- With `ENABLE_PERSISTENT_CONFIG=false`, the `config` table stayed empty.
+  Setting `ENABLE_SIGNUP=false` and recreating the container made a second
+  signup return `403`, confirming that the compose environment wins.
+- Open WebUI's Docling loader extracted a 10-page PDF through Docling with
+  `ocr_preset=tesseract`, `ocr_lang=["fr"]`, `table_mode=accurate` and
+  `do_table_structure=true`.
+- Full chat/RAG was **not** tested on pve-node1 because vLLM is not started there;
+  that must be validated on the 48 GB target.
 
 ## Validation
 

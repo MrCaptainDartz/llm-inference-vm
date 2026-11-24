@@ -5,6 +5,8 @@ inference_stack_root: "/srv/llm"
 inference_stack_compose_dir: "/srv/llm/compose"
 inference_stack_litellm_dir: "/srv/llm/litellm"
 inference_stack_hf_cache_dir: "/srv/llm/hf-cache"
+# Reload bundle images even when Docker already has them.
+inference_stack_force_load_images: false
 
 vllm_image: "vllm/vllm-openai:v0.34.0"
 vllm_served_model_name: "qwen3.8-27b"

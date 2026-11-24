@@ -110,12 +110,29 @@
     mode: '0600'
   no_log: true
 
+- name: List the images already present in Docker
+  ansible.builtin.command:
+    cmd: "docker image inspect {{ item }}"
+  loop: "{{ [litellm_image, docling_image] + ([vllm_image] if (vllm_start | bool) else []) }}"
+  register: inference_stack_image_check
+  changed_when: false
+  failed_when: false
+
+- name: Remember which images must still be loaded
+  ansible.builtin.set_fact:
+    inference_stack_missing_images: >-
+      {{ (inference_stack_image_check.results | map(attribute='item') | list)
+         if (inference_stack_force_load_images | bool)
+         else (inference_stack_image_check.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list) }}
+
 - name: Load the LiteLLM image from the bundle (airgap)
   ansible.builtin.command:
     cmd: "docker load -i {{ vllm_bundle_dir }}/images/litellm.tar"
   register: inference_stack_litellm_load
   changed_when: "'Loaded image' in inference_stack_litellm_load.stdout"
-  when: vllm_offline | bool
+  when:
+    - vllm_offline | bool
+    - litellm_image in inference_stack_missing_images
 
 - name: Load the vLLM image from the bundle (airgap)
   ansible.builtin.command:
@@ -125,13 +142,16 @@
   when:
     - vllm_offline | bool
     - vllm_start | bool
+    - vllm_image in inference_stack_missing_images
 
 - name: Load the Docling image from the bundle (airgap)
   ansible.builtin.command:
     cmd: "docker load -i {{ vllm_bundle_dir }}/images/{{ 'docling.tar' if (docling_gpu | bool) else 'docling-cpu.tar' }}"
   register: inference_stack_docling_load
   changed_when: "'Loaded image' in inference_stack_docling_load.stdout"
-  when: docling_offline | bool
+  when:
+    - docling_offline | bool
+    - docling_image in inference_stack_missing_images
 
 - name: Validate the Docker Compose configuration
   ansible.builtin.command:

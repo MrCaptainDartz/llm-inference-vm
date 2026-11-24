@@ -242,7 +242,8 @@ What the roles do in airgap mode:
 - `inference_stack`:
   - loads `images/litellm.tar`, `images/docling.tar` (or
     `images/docling-cpu.tar` when `docling_gpu: false`) and `images/vllm.tar`
-    when `vllm_start`;
+    when `vllm_start`; an image already present in Docker is not loaded again
+    (`inference_stack_force_load_images: true` to force a reload);
   - copies `tessdata/fra.traineddata` and `fr.traineddata` into
     `/srv/llm/docling/tessdata/`;
   - mounts `/airgap-bundle/models` into vLLM read-only;

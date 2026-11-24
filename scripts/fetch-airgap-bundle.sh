@@ -6,8 +6,16 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 BUNDLE_DIR="${REPO_DIR}/airgap-bundle"
 
+# vLLM tags carry a leading v (v0.34.0); accept "0.34.0" and "v0.34.0".
+vllm_tag() {
+  case "$1" in
+    [0-9]*) printf 'v%s\n' "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 VLLM_VERSION="${VLLM_VERSION:-0.34.0}"
-VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"
+VLLM_IMAGE="vllm/vllm-openai:$(vllm_tag "$VLLM_VERSION")"
 LITELLM_IMAGE="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
 OPEN_WEBUI_IMAGE="${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.13.4}"
 DOCLING_IMAGE="${DOCLING_IMAGE:-quay.io/docling-project/docling-serve-cu130:v1.38.2}"
@@ -108,7 +116,7 @@ Usage: sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle [--skip=LI
 
 Options:
   --output DIR          Bundle directory (default: <repo>/airgap-bundle)
-  --vllm-version VER    vLLM image tag (default: 0.34.0)
+  --vllm-version VER    vLLM version (default: 0.34.0, tag v0.34.0)
   --skip LIST           Comma-separated sections, e.g. --skip=model,images
   --force               Re-download files that already exist
   -h, --help            Show this help
@@ -128,6 +136,7 @@ Skipping a section keeps existing files in the bundle and fetches the rest.
 
 Environment:
   TARGET_MODEL/DRAFT_MODEL/EMBEDDING_MODEL  Hugging Face repos to bundle
+  VLLM_VERSION           vLLM version, tag v<version> (default: 0.34.0)
   NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest stable 595.x)
   HF_TOKEN               Hugging Face token for gated models
   VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/DOCLING_CPU_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
@@ -143,7 +152,7 @@ while [[ $# -gt 0 ]]; do
       BUNDLE_DIR="$2"; shift 2 ;;
     --vllm-version)
       [[ $# -ge 2 ]] || die "$1 needs a version"
-      VLLM_VERSION="$2"; VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"; shift 2 ;;
+      VLLM_VERSION="$2"; VLLM_IMAGE="vllm/vllm-openai:$(vllm_tag "$2")"; shift 2 ;;
     --skip)
       [[ $# -ge 2 ]] || die "$1 needs a section list (use --help)"
       parse_skip_list "$2"; shift 2 ;;
@@ -218,14 +227,19 @@ image_digest() {
 
 skopeo_image() {
   local image="$1" name="$2"
-  local tar="${BUNDLE_DIR}/images/${name}.tar"
+  local tar="${BUNDLE_DIR}/images/${name}.tar" part="${BUNDLE_DIR}/images/${name}.tar.part"
   if [[ -s "$tar" && "$FORCE" != "true" ]]; then
     info "image exists: images/${name}.tar"
     return 0
   fi
+  if [[ "$FORCE" == "true" ]]; then rm -f "$tar" "$part"; fi
   log "Copying ${image} -> images/${name}.tar"
-  "$SKOPEO" copy --override-arch amd64 --override-os linux --retry-times 3 \
-    "docker://${image}" "docker-archive:${tar}:${image}"
+  if ! "$SKOPEO" copy --override-arch amd64 --override-os linux --retry-times 3 \
+      "docker://${image}" "docker-archive:${part}:${image}"; then
+    rm -f "$part"
+    return 1
+  fi
+  mv -f "$part" "$tar"
 }
 
 fetch_nvidia_driver() {

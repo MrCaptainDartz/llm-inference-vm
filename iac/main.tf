@@ -1,5 +1,4 @@
-# Inference LXC for vLLM, LiteLLM, and Docling.
-# The GPU hook is added post-create by scripts/proxmox-lxc-gpu.sh; Open WebUI runs elsewhere.
+# Inference LXC only (Open WebUI runs on an existing VM); the GPU hook is added afterwards.
 resource "proxmox_download_file" "ubuntu_lxc_template" {
   count               = var.ubuntu_lxc_template_preuploaded ? 0 : 1
   content_type        = "vztmpl"
@@ -26,7 +25,7 @@ resource "proxmox_virtual_environment_container" "inference" {
     nesting = var.lxc_enable_nesting
   }
 
-  # Keep features added by scripts/proxmox-lxc-gpu.sh (the API token cannot change them).
+  # Ignore features: scripts/proxmox-lxc-gpu.sh owns these flags.
   lifecycle {
     ignore_changes = [features]
   }

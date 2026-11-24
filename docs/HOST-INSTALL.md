@@ -1,31 +1,33 @@
-# Hôte Proxmox et LXC d'inférence
+# Proxmox host and inference LXC
 
-Ce document couvre la partie **manuelle** de l'hôte Proxmox : driver NVIDIA,
-toolkit, template LXC, hooks GPU, bind mount du bundle airgap.
+This document covers the **manual** part on the Proxmox host: NVIDIA driver,
+toolkit, LXC template, GPU hooks, airgap bundle bind mount.
 
-Le PVE cible existe déjà et est airgap : ce dépôt ajoute seulement le LXC
-(et les VM que tu crées à côté). Les dépôts Debian/PVE locaux
-(`main contrib non-free non-free-firmware`) sont supposés configurés ; ils
-fournissent `dkms`, `build-essential` et les headers du kernel. Le bundle ne
-duplique pas ces paquets.
+The target PVE already exists and is airgapped: this repo only adds the LXC
+(and the VMs you create next to it). The local Debian/PVE repositories
+(`main contrib non-free non-free-firmware`) are assumed to be configured; they
+provide `dkms`, `build-essential` and the kernel headers. The bundle does not
+duplicate those packages.
 
-Le LXC reste **non privilégié**. Le GPU n'est pas passé en PCI/VFIO : le host
-garde le driver et le LXC reçoit les devices + les libs user-space via le hook
-NVIDIA de Proxmox.
+The LXC stays **unprivileged**. The GPU is not passed through PCI/VFIO: the
+host keeps the driver and the LXC receives the devices + user-space libraries
+through the Proxmox NVIDIA hook.
 
-La partie front (Open WebUI + PGVector) tourne sur **ta VM Docker existante**
-via `deploy/openwebui/docker-compose.yml`. Ce repo ne crée plus de VM front.
+The front part (Open WebUI + PGVector) runs on **your existing Docker VM**
+through `deploy/openwebui/docker-compose.yml`. This repo no longer creates a
+front VM.
 
-## 1. Prérequis
+## 1. Requirements
 
-- Proxmox VE 9.2+ avec `lxc-pve >= 6.0.5` (`dpkg -l lxc-pve`).
-- Dépôts Debian/PVE locaux (`main contrib non-free non-free-firmware`).
-- `dkms`, `build-essential`, `proxmox-headers-$(uname -r)` depuis ces dépôts.
-- Un GPU NVIDIA visible sur l'hôte (`lspci`, `nvidia-smi`).
-- Le bundle airgap transféré sur l'hôte (voir `docs/AIRGAP.md`).
-- Un token API Proxmox et la clé SSH publique pour Terraform.
+- Proxmox VE 9.2+ with `lxc-pve >= 6.0.5` (`dpkg -l lxc-pve`).
+- Local Debian/PVE repositories (`main contrib non-free non-free-firmware`).
+- `dkms`, `build-essential`, `proxmox-headers-$(uname -r)` from those
+  repositories.
+- An NVIDIA GPU visible on the host (`lspci`, `nvidia-smi`).
+- The airgap bundle transferred to the host (see `docs/AIRGAP.md`).
+- A Proxmox API token and the public SSH key for Terraform.
 
-Vérifications :
+Checks:
 
 ```bash
 pveversion
@@ -33,9 +35,9 @@ dpkg -l lxc-pve | tail -1
 ls -l /usr/share/lxc/hooks/nvidia
 ```
 
-## 2. Driver NVIDIA (version du bundle)
+## 2. NVIDIA driver (version from the bundle)
 
-Le bundle contient `host/NVIDIA-Linux-x86_64-<version>.run` et
+The bundle contains `host/NVIDIA-Linux-x86_64-<version>.run` and
 `host/NVIDIA_DRIVER_VERSION`.
 
 ```bash
@@ -46,13 +48,13 @@ chmod +x NVIDIA-Linux-x86_64-*.run
 ./NVIDIA-Linux-x86_64-*.run --dkms --no-x-check --no-nouveau-check
 ```
 
-`pve-headers` est une méta transitionnelle ; `proxmox-headers-$(uname -r)`
-cible le kernel courant. Les deux viennent de tes dépôts PVE locaux, pas du
-bundle.
+`pve-headers` is a transitional meta package; `proxmox-headers-$(uname -r)`
+targets the running kernel. Both come from your local PVE repositories, not
+from the bundle.
 
-Sélection interactive recommandée : pas de 32 bits, pas de X, DKMS = oui.
+Recommended interactive choices: no 32-bit libraries, no X, DKMS = yes.
 
-Vérifications :
+Checks:
 
 ```bash
 nvidia-smi
@@ -61,16 +63,16 @@ modprobe nvidia_uvm
 ls -l /dev/nvidia0 /dev/nvidia-uvm
 ```
 
-> Le script prend par défaut le **dernier driver stable** de la branche 595
-> (`https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt`, actuellement
-> 595.112.07). La version `595.104.02` est celle validée sur l'hôte de test
-> (PVE 9.2.27, kernel 7.0). Si besoin, pin :
+> The script uses the **latest stable driver** from the 595 branch by default
+> (`https://download.nvidia.com/XFree86/Linux-x86_64/latest.txt`, currently
+> 595.112.07). `595.104.02` is the version validated on the test host
+> (PVE 9.2.27, kernel 7.0). If needed, pin it:
 > `NVIDIA_DRIVER_VERSION=595.104.02 ./scripts/fetch-airgap-bundle.sh`.
 
-## 3. NVIDIA Container Toolkit (hôte)
+## 3. NVIDIA Container Toolkit (host)
 
-Le hook `/usr/share/lxc/hooks/nvidia` (fourni par `lxc-pve`) appelle
-`nvidia-container-cli`. Il faut donc le toolkit sur l'hôte :
+The `/usr/share/lxc/hooks/nvidia` hook (shipped by `lxc-pve`) calls
+`nvidia-container-cli`. The toolkit is therefore required on the host:
 
 ```bash
 apt install -y /path/to/airgap-bundle/host/nvidia-container-toolkit/*.deb
@@ -78,23 +80,23 @@ nvidia-container-cli --version
 nvidia-ctk --version
 ```
 
-## 4. Template LXC
+## 4. LXC template
 
 ```bash
 cp /path/to/airgap-bundle/host/ubuntu-26.04-standard_26.04-1_amd64.tar.zst \
    /var/lib/vz/template/cache/
 ```
 
-Dans `iac/terraform.tfvars` (mode airgap) :
+In `iac/terraform.tfvars` (airgap mode):
 
 ```hcl
 ubuntu_lxc_template_preuploaded = true
 ```
 
-Garder `proxmox_insecure = false` ; le passer à `true` uniquement si l'API
-Proxmox a un certificat auto-signé.
+Keep `proxmox_insecure = false`; only set it to `true` if the Proxmox API
+uses a self-signed certificate.
 
-Puis, depuis le poste de pilotage :
+Then, from the control machine:
 
 ```bash
 cd iac
@@ -102,47 +104,47 @@ tofu init
 tofu apply
 ```
 
-Cela crée **uniquement** le LXC (120 par défaut, `llm-lxc`). Pas de VM
-front, pas d'image cloud, pas de snippet cloud-init.
+This creates **only** the LXC (120 by default, `llm-lxc`). No front VM, no
+cloud image, no cloud-init snippet.
 
-## 5. Hooks GPU du LXC
+## 5. LXC GPU hooks
 
-Sur l'hôte Proxmox, après la création du LXC :
+On the Proxmox host, after the LXC is created:
 
 ```bash
 /path/to/repo/scripts/proxmox-lxc-gpu.sh 120 \
   --bundle /srv/airgap-bundle
 ```
 
-Le script :
+The script:
 
-- arrête le LXC ;
-- active `nesting=1,keyctl=1,fuse=1,mknod=1` ;
-- détecte les majors NVIDIA réels (`/dev/nvidia0`, `/dev/nvidia-uvm`, …) et
-  ajoute les règles `lxc.cgroup2.devices.allow` ; en pratique **195**
-  (`nvidia0/ctl/modeset`) et **509** (`nvidia-uvm`) suffisent. Les majors
-  `234`/`511` sont les nodes `nvidia-caps` réservés à MIG : inutiles ici, à
-  ajouter manuellement seulement si tu actives MIG ;
-- ajoute le hook `lxc.hook.pre-start` (`nvidia_uvm`), le hook
-  `lxc.hook.mount` (`/usr/share/lxc/hooks/nvidia`), les variables
-  `NVIDIA_VISIBLE_DEVICES=all` / `NVIDIA_DRIVER_CAPABILITIES=compute,utility` ;
-- ajoute 16 GiB de `/dev/shm` ;
-- monte le bundle en lecture seule sur `/airgap-bundle` (`mpN`) ;
-- redémarre le LXC et vérifie `nvidia-smi` dedans.
+- stops the LXC;
+- enables `nesting=1,keyctl=1,fuse=1,mknod=1`;
+- detects the real NVIDIA majors (`/dev/nvidia0`, `/dev/nvidia-uvm`, …) and
+  adds the `lxc.cgroup2.devices.allow` rules; in practice **195**
+  (`nvidia0/ctl/modeset`) and **509** (`nvidia-uvm`) are enough. Majors
+  `234`/`511` are the `nvidia-caps` nodes reserved for MIG: useless here, add
+  them manually only if you enable MIG;
+- adds the `lxc.hook.pre-start` hook (`nvidia_uvm`), the `lxc.hook.mount` hook
+  (`/usr/share/lxc/hooks/nvidia`), and the
+  `NVIDIA_VISIBLE_DEVICES=all` / `NVIDIA_DRIVER_CAPABILITIES=compute,utility`
+  variables;
+- adds 16 GiB of `/dev/shm`;
+- mounts the bundle read-only on `/airgap-bundle` (`mpN`);
+- restarts the LXC and checks `nvidia-smi` inside it.
 
-Il ne touche **pas** à `/dev/dri` : CUDA n'en a pas besoin, et un LXC
-non privilégié ne pourrait pas utiliser les nodes `0660 root:video` sans
-mapper les GID. Le script n'ajoute que les majors NVIDIA.
+It does **not** touch `/dev/dri`: CUDA does not need it, and an unprivileged
+LXC could not use the `0660 root:video` nodes without mapping the GIDs. The
+script only adds the NVIDIA majors.
 
-### Firewall Proxmox
+### Proxmox firewall
 
-Le LXC est créé avec `network_firewall = true`. Si le firewall Proxmox est
-actif, ouvre au minimum `22` (Ansible/SSH), `4000` (LiteLLM) et `5001`
-(Docling), ou passe `network_firewall = false` dans `terraform.tfvars`.
-Sans règle, `tofu apply` peut réussir mais Ansible/Open WebUI ne joindra pas
-le LXC.
+The LXC is created with `network_firewall = true`. If the Proxmox firewall is
+active, open at least `22` (Ansible/SSH), `4000` (LiteLLM) and `5001`
+(Docling), or set `network_firewall = false` in `terraform.tfvars`. Without a
+rule, `tofu apply` can succeed while Ansible/Open WebUI cannot reach the LXC.
 
-Vérifications :
+Checks:
 
 ```bash
 pct config 120 | grep -E 'features|lxc.cgroup2|lxc.hook|lxc.environment|mp[0-9]'
@@ -150,7 +152,7 @@ pct exec 120 -- nvidia-smi -L
 ssh root@192.0.2.10 nvidia-smi -L
 ```
 
-## 6. Ansible : LXC d'inférence
+## 6. Ansible: inference LXC
 
 ```bash
 cd ansible
@@ -159,60 +161,60 @@ cp group_vars/all.yml.example group_vars/all.yml
 $EDITOR group_vars/all.yml
 ```
 
-Renseigner au minimum :
+Fill in at least:
 
 ```yaml
 litellm_master_key: "<openssl rand -hex 32>"
 docling_api_key: "<openssl rand -hex 32>"
 
-# Hôte de test (GPU 8 Go) :
+# Test host (8 GB GPU):
 vllm_start: false
 docling_gpu: false
 
-# Site 48 Go :
+# 48 GB site:
 # vllm_start: true
 # docling_gpu: true
 ```
 
-Puis :
+Then:
 
 ```bash
-ssh-keyscan -H <ip-lxc> >> ~/.ssh/known_hosts
+ssh-keyscan -H <lxc-ip> >> ~/.ssh/known_hosts
 ansible-playbook playbook.yml
 ```
 
-Ansible vérifie les clés d'hôte (`host_key_checking = true`) ; sans l'entrée
-`known_hosts`, le premier run échoue volontairement.
+Ansible verifies host keys (`host_key_checking = true`); without the
+`known_hosts` entry, the first run fails on purpose.
 
-Le rôle `lxc_docker` installe Docker + `nvidia-container-toolkit`, configure le
-runtime Docker `nvidia` avec `no-cgroups=true`, charge l'image CUDA de smoke
-test et exécute `nvidia-smi` dans un conteneur.
+The `lxc_docker` role installs Docker + `nvidia-container-toolkit`, configures
+the Docker `nvidia` runtime with `no-cgroups=true`, loads the CUDA smoke-test
+image and runs `nvidia-smi` in a container.
 
-Le rôle `inference_stack` :
+The `inference_stack` role:
 
-- télécharge `fra.traineddata` et le duplique en `fr.traineddata` dans
-  `/srv/llm/docling/tessdata/` (le preset Tesseract de Docling cherche `fr`) ;
-- déploie le compose vLLM + embedding + LiteLLM + **Docling** ;
-- avec `docling_gpu: false`, utilise l'image Docling CPU ; avec `true`,
-  l'image CUDA `docling-serve-cu130:v1.38.2` et le runtime `nvidia` (Docling
-  détecte CUDA automatiquement ; il n'y a pas de `DOCLING_DEVICE` à forcer) ;
-- expose LiteLLM `:4000` et Docling `:5001` au LAN ; vLLM reste sur
-  `127.0.0.1:8000` / réseau Docker interne ;
-- attend la santé de vLLM (si démarré), LiteLLM et Docling (API key).
+- downloads `fra.traineddata` and copies it to `fr.traineddata` in
+  `/srv/llm/docling/tessdata/` (Docling's Tesseract preset looks for `fr`);
+- deploys the vLLM + embedding + LiteLLM + **Docling** compose;
+- with `docling_gpu: false` it uses the Docling CPU image; with `true`, the
+  CUDA image `docling-serve-cu130:v1.38.2` and the `nvidia` runtime (Docling
+  detects CUDA by itself; there is no `DOCLING_DEVICE` to force);
+- exposes LiteLLM `:4000` and Docling `:5001` to the LAN; vLLM stays on
+  `127.0.0.1:8000` / the internal Docker network;
+- waits for the health of vLLM (when started), LiteLLM and Docling (API key).
 
-Le Docling contient **les deux moteurs OCR** :
-- **Tesseract** (`fra`/`fr`) : CPU, 0 VRAM, rapide ;
-- **EasyOCR** (`latin_g2` inclus dans l'image) : plus robuste sur les scans
-  inversés/bruités, plus lent sur CPU et ~1-2 GB VRAM s'il utilise le GPU.
+Docling ships **both OCR engines**:
+- **Tesseract** (`fra`/`fr`): CPU, 0 VRAM, fast;
+- **EasyOCR** (`latin_g2` included in the image): more robust on
+  inverted/noisy scans, slower on CPU and ~1-2 GB VRAM when it uses the GPU.
 
-Le choix se fait côté Open WebUI via `DOCLING_PARAMS` (voir
-`deploy/openwebui/README.md`). `table_mode=accurate` active TableFormer
-accurate pour les tableaux ; il tourne sur CPU **et** GPU (pas uniquement
-GPU), et c'est déjà le défaut Docling.
+The choice is made on the Open WebUI side through `DOCLING_PARAMS` (see
+`deploy/openwebui/README.md`). `table_mode=accurate` enables TableFormer
+accurate for tables; it runs on CPU **and** GPU (not GPU only), and is already
+the Docling default.
 
-## 7. Front : Open WebUI + PGVector sur ta VM Docker
+## 7. Front: Open WebUI + PGVector on your Docker VM
 
-Sur ta VM existante :
+On your existing VM:
 
 ```bash
 cd deploy/openwebui
@@ -223,105 +225,106 @@ docker compose config --quiet
 docker compose up -d
 ```
 
-Renseigner `LITELLM_BASE_URL`, `LITELLM_API_KEY` (le master key),
+Fill in `LITELLM_BASE_URL`, `LITELLM_API_KEY` (the master key),
 `DOCLING_SERVER_URL`, `DOCLING_API_KEY`, `POSTGRES_PASSWORD`,
-`WEBUI_SECRET_KEY`, et `DOCLING_PARAMS` :
+`WEBUI_SECRET_KEY`, and `DOCLING_PARAMS`:
 
 ```json
 {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
 ```
 
-ou EasyOCR :
+or EasyOCR:
 
 ```json
 {"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
 ```
 
-Garder `ENABLE_PERSISTENT_CONFIG=false` : le `.env` gagne sur la DB/UI. Modifier
-les réglages dans `.env` puis `docker compose up -d` ; les changements faits
-dans l'UI ne survivent pas au redémarrage.
+Keep `ENABLE_PERSISTENT_CONFIG=false`: `.env` wins over the DB/UI. Change the
+settings in `.env` then `docker compose up -d`; changes made in the UI do not
+survive a restart.
 
-Le compose inclut PostgreSQL 17 + pgvector pour la DB applicative **et** les
-vecteurs. `PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH=1024` correspond à
-Qwen3-Embedding-0.6B. Voir `deploy/openwebui/README.md` pour les prérequis de
-la VM (Docker Engine + Compose v2, 4 Go RAM, accès aux ports 4000/5001), les
-backups, l'airgap et le dépannage.
+The compose includes PostgreSQL 17 + pgvector for the application DB **and**
+the vectors. `PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH=1024` matches
+Qwen3-Embedding-0.6B. See `deploy/openwebui/README.md` for the VM
+requirements (Docker Engine + Compose v2, 4 GB RAM, access to ports 4000/5001),
+backups, airgap and troubleshooting.
 
-## 8. Cible 48 Go
+## 8. 48 GB target
 
-Sur le serveur cible (GPU 48 Go) :
+On the target server (48 GB GPU):
 
 ```yaml
 vllm_start: true
 docling_gpu: true
 ```
 
-Puis :
+Then:
 
 ```bash
 ansible-playbook playbook.yml --limit inference_lxc
 ```
 
-Le profil :
-- vLLM chat `--gpu-memory-utilization 0.78` quand Docling GPU est actif
-  (0.82 sinon), embedding `0.06` ;
-- Docling GPU layout/table ~4-5 GB, OCR Tesseract CPU 0 VRAM (EasyOCR ~1-2 GB
-  s'il est sélectionné) ;
-- marge résiduelle ~2,7-3,7 GB sur 48 Go, à mesurer au premier démarrage
-  (les pics Docling peuvent la réduire).
+The profile:
+- vLLM chat `--gpu-memory-utilization 0.78` when Docling GPU is active
+  (0.82 otherwise), embedding `0.06`;
+- Docling GPU layout/table ~4-5 GB, Tesseract CPU OCR 0 VRAM (EasyOCR ~1-2 GB
+  when selected);
+- remaining margin ~2.7-3.7 GB out of 48 GB, to be measured at first start
+  (Docling peaks can reduce it).
 
-Premier démarrage vLLM (chargement des poids) :
+First vLLM start (weight loading):
 
 ```bash
 docker logs -f vllm
 curl -s http://127.0.0.1:8000/v1/models
 ```
 
-Vérifier le rendu Docling et l'OCR dans les logs :
+Check the Docling rendering and OCR in the logs:
 
 ```bash
 docker logs -f docling
 docker exec docling tesseract --list-langs   # eng, fr, fra, osd
 ```
 
-Points de vigilance :
+Watch points:
 - `--kv-cache-dtype nvfp4`, `--attention-backend flash_attn`,
-  `--speculative-config '{"method":"dflash",...,"num_speculative_tokens":7}'` ;
-- si le décode NVFP4/DFlash sm120 plante, passer `vllm_enforce_eager: true` ;
-- si `--reasoning-parser qwen3` / `--tool-call-parser qwen3_coder` n'existent
-  pas dans l'image vLLM, les vider dans `all.yml` ;
-- ne jamais exposer vLLM (8000) sur le LAN : seuls LiteLLM (4000) et Docling
-  (5001) sont publiés, protégés par leurs clés.
+  `--speculative-config '{"method":"dflash",...,"num_speculative_tokens":7}'`;
+- if the sm120 NVFP4/DFlash decode crashes, set `vllm_enforce_eager: true`;
+- if `--reasoning-parser qwen3` / `--tool-call-parser qwen3_coder` do not
+  exist in the vLLM image, clear them in `all.yml`;
+- never expose vLLM (8000) on the LAN: only LiteLLM (4000) and Docling (5001)
+  are published, protected by their keys.
 
-## 9. Notes de sécurité
+## 9. Security notes
 
-- LXC non privilégié, `nesting/keyctl/fuse/mknod` pour Docker, hook NVIDIA.
-- Les devices NVIDIA sont en `0666` (défaut du driver) ; l'autorisation réelle
-  est le cgroup `lxc.cgroup2.devices.allow` (majors 195/509 ; `nvidia-caps`
-  MIG non nécessaire).
-- Pas de `/dev/dri` : inutile pour CUDA, et impossible à utiliser proprement
-  dans un LXC non privilégié sans mapping des GID `video`/`render`.
-- `nvidia-container-cli` tourne avec `--no-cgroups` : le cgroup est géré par le
-  parent LXC, pas par le toolkit.
-- LiteLLM et Docling portent chacun une clé API ; vLLM n'est pas exposé.
-- Docling `DOCLING_SERVE_API_KEY` et LiteLLM `litellm_master_key` sont dans
-  `group_vars/all.yml` (gitignoré) et dans `/srv/llm/...` (0600 pour LiteLLM et
-  pour le compose, qui contient aussi les clés).
+- Unprivileged LXC, `nesting/keyctl/fuse/mknod` for Docker, NVIDIA hook.
+- NVIDIA devices are `0666` (driver default); the real authorisation is the
+  `lxc.cgroup2.devices.allow` cgroup (majors 195/509; MIG `nvidia-caps` not
+  needed).
+- No `/dev/dri`: useless for CUDA, and impossible to use cleanly in an
+  unprivileged LXC without mapping the `video`/`render` GIDs.
+- `nvidia-container-cli` runs with `--no-cgroups`: the cgroup is managed by the
+  LXC parent, not by the toolkit.
+- LiteLLM and Docling each carry an API key; vLLM is not exposed.
+- Docling `DOCLING_SERVE_API_KEY` and LiteLLM `litellm_master_key` are in
+  `group_vars/all.yml` (gitignored) and in `/srv/llm/...` (0600 for LiteLLM and
+  for the compose, which also holds the keys).
 
-Les anciens rôles `firewall` et `security_hardening` ne sont pas réappliqués :
-leur sysctl `net.ipv4.ip_forward=0` casse Docker, et UFW ne filtre pas les
-ports publiés par Docker. La frontière réseau reste le firewall Proxmox
-(voir ci-dessus). Le rôle `lxc_security` ajoute :
+The former `firewall` and `security_hardening` roles are not applied again:
+their `net.ipv4.ip_forward=0` sysctl breaks Docker, and UFW does not filter the
+ports published by Docker. The network boundary remains the Proxmox firewall
+(see above). The `lxc_security` role adds:
 
-- **fail2ban** avec des bans **temporaires** (`bantime = 1h`,
-  `bantime.increment = false`, donc jamais de ban définitif) ;
-- une liste `lxc_security_fail2ban_ignore_cidrs` dans
-  `ansible/group_vars/all.yml` pour exclure un réseau/site du ban
-  (ex. `["192.0.2.0/24"]`) ;
-`auditd` n'est **pas** inclus dans ce projet : dans un LXC non privilégié, le
-noyau refuse `set-pid`/`set-enable` (l'audit n'est pas namespacé), même avec
-`cap_audit_control` visible. On reste sur `fail2ban` + le firewall Proxmox ;
-pas d'auditd sur l'hôte.
+- **fail2ban** with **temporary** bans (`bantime = 1h`,
+  `bantime.increment = false`, so never a permanent ban);
+- an `lxc_security_fail2ban_ignore_cidrs` list in
+  `ansible/group_vars/all.yml` to exclude a network/site from banning
+  (e.g. `["192.0.2.0/24"]`);
 
-Le LXC garde SSH key-only, et les conteneurs ont `no-new-privileges` +
+`auditd` is **not** included in this project: in an unprivileged LXC, the
+kernel refuses `set-pid`/`set-enable` (audit is not namespaced), even with
+`cap_audit_control` visible. We stay with `fail2ban` + the Proxmox firewall;
+no auditd on the host.
+
+The LXC keeps key-only SSH, and the containers run with `no-new-privileges` +
 `pids_limit`.

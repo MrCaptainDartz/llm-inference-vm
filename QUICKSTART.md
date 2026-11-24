@@ -1,28 +1,28 @@
 # Quickstart
 
-De zéro à une stack d'inférence LLM sur Proxmox, avec :
+From zero to an LLM inference stack on Proxmox, with:
 
-- un **LXC** pour vLLM (chat + embeddings), LiteLLM et Docling (GPU) ;
-- **Open WebUI + PGVector** en Docker sur ta VM de services existante ;
-- le GPU NVIDIA sur l'hôte, injecté dans le LXC par le hook Proxmox ;
-- un mode **airgap** pour le site cible.
+- an **LXC** for vLLM (chat + embeddings), LiteLLM and Docling (GPU);
+- **Open WebUI + PGVector** in Docker on your existing services VM;
+- the NVIDIA GPU on the host, injected into the LXC by the Proxmox hook;
+- an **airgap** mode for the target site.
 
-## 0. Prérequis
+## 0. Requirements
 
-- Proxmox VE 9.2+ avec `lxc-pve >= 6.0.5`.
-- Driver NVIDIA + `nvidia-container-toolkit` sur l'hôte
+- Proxmox VE 9.2+ with `lxc-pve >= 6.0.5`.
+- NVIDIA driver + `nvidia-container-toolkit` on the host
   ([docs/HOST-INSTALL.md](docs/HOST-INSTALL.md)).
-- Poste de pilotage : `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
-  `community.general`, une clé SSH.
-- Une VM Docker existante pour Open WebUI + PGVector (Docker Engine 24+,
-  Compose v2, ~4 Go RAM, accès aux ports 4000/5001 du LXC).
-- Airgap : un builder Ubuntu 26.04 amd64 avec internet.
+- Control machine: `tofu` (OpenTofu ≥ 1.11), `ansible-core` +
+  `community.general`, an SSH key (see `scripts/prepare-offline-tooling.sh`).
+- An existing Docker VM for Open WebUI + PGVector (Docker Engine 24+,
+  Compose v2, ~4 GB RAM, access to ports 4000/5001 of the LXC).
+- Airgap: an Ubuntu 26.04 amd64 builder with internet access.
 
 ```bash
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-## 1. Créer le LXC
+## 1. Create the LXC
 
 ```bash
 cd iac
@@ -30,34 +30,34 @@ cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
 ```
 
-`proxmox_insecure` reste à `false` ; ne le passer à `true` que si l'API
-Proxmox utilise un certificat auto-signé.
+`proxmox_insecure` stays `false`; only set it to `true` if the Proxmox API
+uses a self-signed certificate.
 
-Renseigner : `proxmox_api_url`, `proxmox_api_token`, `ssh_public_key`,
+Fill in: `proxmox_api_url`, `proxmox_api_token`, `ssh_public_key`,
 `vm_node_name`, `network_bridge`, `network_gateway`, `lxc_ipv4`.
 
-Défaut : LXC 120 `llm-lxc` → `192.0.2.10/24`.
+Default: LXC 120 `llm-lxc` → `192.0.2.10/24`.
 
 ```bash
 tofu init
 tofu apply
 ```
 
-Le repo ne crée **que le LXC**. Open WebUI tourne sur ta VM Docker existante.
+The repo creates **only the LXC**. Open WebUI runs on your existing Docker VM.
 
-## 2. Ajouter les hooks GPU au LXC
+## 2. Add the GPU hooks to the LXC
 
-Sur l'hôte Proxmox :
+On the Proxmox host:
 
 ```bash
 /path/to/repo/scripts/proxmox-lxc-gpu.sh 120
 ```
 
-Cela active les features Docker-in-LXC, les règles cgroup NVIDIA, le hook
-`/usr/share/lxc/hooks/nvidia`, 16 GiB de `/dev/shm`, et vérifie `nvidia-smi`
-dans le LXC. En airgap, ajouter `--bundle /srv/airgap-bundle`.
+This enables the Docker-in-LXC features, the NVIDIA cgroup rules, the
+`/usr/share/lxc/hooks/nvidia` hook, 16 GiB of `/dev/shm`, and checks
+`nvidia-smi` inside the LXC. In airgap, add `--bundle /srv/airgap-bundle`.
 
-## 3. Configurer le LXC (Ansible)
+## 3. Configure the LXC (Ansible)
 
 ```bash
 cd ../ansible
@@ -66,16 +66,16 @@ cp group_vars/all.yml.example group_vars/all.yml
 $EDITOR group_vars/all.yml
 ```
 
-À renseigner :
+To fill in:
 
 ```yaml
 litellm_master_key: "<openssl rand -hex 32>"
 docling_api_key: "<openssl rand -hex 32>"
 
-# Serveur 48 Go :
+# 48 GB server:
 vllm_start: true
 docling_gpu: true
-# Hôte de test (GPU 8 Go) :
+# Test host (8 GB GPU):
 # vllm_start: false
 # docling_gpu: false
 
@@ -83,27 +83,27 @@ docling_ocr_preset: "tesseract"
 docling_ocr_lang: ["fr"]
 ```
 
-Airgap : ajouter `airgap_mode: true` et `llm_bundle_dir: /airgap-bundle`.
+Airgap: add `airgap_mode: true` and `llm_bundle_dir: /airgap-bundle`.
 
 ```bash
 ansible-playbook playbook.yml
 ```
 
-Avant le premier run, ajoute la clé d'hôte du LXC à `known_hosts` (Ansible
-vérifie désormais les clés d'hôte) :
+Before the first run, add the LXC host key to `known_hosts` (Ansible now
+verifies host keys):
 
 ```bash
 ssh-keyscan -H 192.0.2.10 >> ~/.ssh/known_hosts
 ```
 
-Le play LXC installe Docker + toolkit NVIDIA, charge le compose vLLM +
-embedding + LiteLLM + Docling, télécharge `fra`/`fr` Tesseract, et attend la
-santé de vLLM (si démarré), LiteLLM et Docling.
+The LXC play installs Docker + the NVIDIA toolkit, loads the vLLM + embedding +
+LiteLLM + Docling compose, downloads Tesseract `fra`/`fr`, and waits for the
+health of vLLM (when started), LiteLLM and Docling.
 
-Sur l'hôte de test (GPU 8 Go), `vllm_start: false` + `docling_gpu: false` :
-LiteLLM et Docling CPU tournent ; vLLM n'est pas chargé.
+On the test host (8 GB GPU), `vllm_start: false` + `docling_gpu: false`:
+LiteLLM and Docling CPU run; vLLM is not loaded.
 
-## 4. Déployer Open WebUI + PGVector sur ta VM Docker
+## 4. Deploy Open WebUI + PGVector on your Docker VM
 
 ```bash
 cd ../deploy/openwebui
@@ -114,7 +114,7 @@ docker compose config --quiet
 docker compose up -d
 ```
 
-Renseigner :
+Fill in:
 
 - `LITELLM_BASE_URL` → `http://192.0.2.10:4000/v1`
 - `LITELLM_API_KEY` → `litellm_master_key`
@@ -122,25 +122,25 @@ Renseigner :
 - `DOCLING_API_KEY` → `docling_api_key`
 - `POSTGRES_PASSWORD` → `openssl rand -hex 24`
 - `WEBUI_SECRET_KEY` → `openssl rand -hex 32`
-- `DOCLING_PARAMS` :
+- `DOCLING_PARAMS`:
   ```json
   {"ocr_preset":"tesseract","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
   ```
-  ou
+  or
   ```json
   {"ocr_preset":"easyocr","ocr_lang":["fr"],"table_mode":"accurate","do_table_structure":true}
   ```
-- `ENABLE_PERSISTENT_CONFIG` → `false` (le `.env` gagne sur l'UI)
-- `ENABLE_SIGNUP` → `true` au premier démarrage, puis `false`
-- `OFFLINE_MODE` → `true` en airgap.
+- `ENABLE_PERSISTENT_CONFIG` → `false` (`.env` wins over the UI)
+- `ENABLE_SIGNUP` → `true` on first boot, then `false`
+- `OFFLINE_MODE` → `true` in airgap.
 
-Le compose inclut PostgreSQL 17 + pgvector et Open WebUI `v0.13.4`. Avec
-`ENABLE_PERSISTENT_CONFIG=false`, le `.env` est la source de vérité : les
-changements faits dans l'UI s'appliquent jusqu'au redémarrage mais ne sont pas
-enregistrés. `table_mode=accurate` (TableFormer) fonctionne sur CPU et GPU,
-pas seulement sur GPU ; il est déjà le défaut Docling.
+The compose includes PostgreSQL 17 + pgvector and Open WebUI `v0.13.4`. With
+`ENABLE_PERSISTENT_CONFIG=false`, `.env` is the source of truth: changes made
+in the UI apply until the next restart but are not persisted.
+`table_mode=accurate` (TableFormer) works on CPU and GPU, not GPU only; it is
+already the Docling default.
 
-## 5. Vérifier
+## 5. Verify
 
 ```bash
 # LXC
@@ -157,12 +157,12 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
 curl -s -H "X-Api-Key: $DOCLING_KEY" \
   http://192.0.2.10:5001/health
 
-# VM Docker
+# Docker VM
 curl -s http://<vm>:8080/health
 docker compose exec postgres psql -U openwebui -d openwebui -c '\dx vector'
 ```
 
-Sur le serveur 48 Go, le premier démarrage vLLM charge les poids (long) :
+On the 48 GB server, the first vLLM start loads the weights (slow):
 
 ```bash
 ssh root@192.0.2.10
@@ -170,30 +170,29 @@ docker logs -f vllm
 curl -s http://127.0.0.1:8000/v1/models
 ```
 
-## 6. Premier chat
+## 6. First chat
 
-1. Ouvrir `http://<vm>:8080`.
-2. Créer le premier compte (admin), puis passer `ENABLE_SIGNUP=false` dans
-   `deploy/openwebui/.env` et faire `docker compose up -d` (l'UI ne persiste
-   pas ce réglage avec `ENABLE_PERSISTENT_CONFIG=false`).
-3. Le modèle `qwen3.8-27b` est exposé par LiteLLM ; discuter.
+1. Open `http://<vm>:8080`.
+2. Create the first account (admin), then set `ENABLE_SIGNUP=false` in
+   `deploy/openwebui/.env` and run `docker compose up -d` (the UI does not
+   persist this setting with `ENABLE_PERSISTENT_CONFIG=false`).
+3. The `qwen3.8-27b` model is exposed by LiteLLM; start chatting.
 
-## 7. RAG : indexer un document
+## 7. RAG: index a document
 
-1. **Espace de travail → Base de connaissances** → créer.
-2. Uploader un PDF : Docling l'analyse (Tesseract/EasyOCR et TableFormer
-   accurate selon `DOCLING_PARAMS`), LiteLLM route les embeddings vers vLLM.
-3. Dans un chat, mentionner la base (`#nom-de-la-base`) et poser une question.
+1. **Workspace → Knowledge** → create a knowledge base.
+2. Upload a PDF: Docling parses it (Tesseract/EasyOCR and TableFormer accurate
+   depending on `DOCLING_PARAMS`), LiteLLM routes the embeddings to vLLM.
+3. In a chat, mention the base (`#knowledge-base-name`) and ask a question.
 
-Pour tester EasyOCR (scans inversés) : modifier `DOCLING_PARAMS` dans
-`deploy/openwebui/.env`, puis `docker compose up -d` (recrée le conteneur avec
-le nouvel environnement) et réindexer. Ne pas se contenter de
-l'UI : avec `ENABLE_PERSISTENT_CONFIG=false`, la modification serait perdue au
-redémarrage.
+To test EasyOCR (inverted scans): edit `DOCLING_PARAMS` in
+`deploy/openwebui/.env`, then `docker compose up -d` (recreates the container
+with the new environment) and reindex. Do not rely on the UI: with
+`ENABLE_PERSISTENT_CONFIG=false`, the change would be lost on restart.
 
-## 8. Brancher un outil de code
+## 8. Connect a coding tool
 
-LiteLLM est le seul endpoint public pour les modèles :
+LiteLLM is the only public endpoint for the models:
 
 ```bash
 export OPENAI_BASE_URL=http://192.0.2.10:4000/v1
@@ -205,40 +204,48 @@ export OPENAI_MODEL=qwen3.8-27b
 curl -s $OPENAI_BASE_URL/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Salut !"}]}' \
+  -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Hello!"}]}' \
   | jq -r '.choices[0].message.content'
 ```
 
-Ne jamais pointer un client directement sur `:8000` (vLLM) : il n'est pas
-exposé au LAN.
+Never point a client directly at `:8000` (vLLM): it is not exposed to the LAN.
 
 ## 9. Airgap
 
-1. Sur le builder :
+1. Prepare the control machine once, while it still has internet (tofu,
+   ansible-core, providers, collections; ~150 MB, re-runnable):
 
    ```bash
-   sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
+   ./scripts/prepare-offline-tooling.sh
    ```
 
-   Pour ne pas retélécharger une partie déjà présente, utiliser
-   `--skip=<section>[,<section>]` (par exemple `--skip=model` : le modèle de
-   chat est déjà sur le builder, le reste — driver, toolkit, template LXC,
-   images, drafter, embeddings — est récupéré).
+2. Build the data bundle on the online builder; `--output` can point at a USB
+   key, since the bundle is tens of GB and does not have to fit on the
+   deployment machine:
 
-2. Transférer le bundle vers le Proxmox host et les images
-   `open_webui.tar`/`pgvector.tar` vers la VM Docker.
-3. `terraform.tfvars` : `ubuntu_lxc_template_preuploaded = true` ;
-   `tofu apply`, puis `scripts/proxmox-lxc-gpu.sh <CTID> --bundle ...`.
-4. `all.yml` : `airgap_mode: true`, `llm_bundle_dir: /airgap-bundle`.
-5. `ansible-playbook playbook.yml`.
-6. Sur la VM Docker : `docker load` des deux images, `OFFLINE_MODE=true`,
+   ```bash
+   sudo ./scripts/fetch-airgap-bundle.sh --output /media/usb/airgap-bundle
+   ```
+
+   To avoid downloading again what is already there, use
+   `--skip=<section>[,<section>]` (for example `--skip=model`: the chat model
+   is already on the builder and everything else — driver, toolkit, LXC
+   template, images, drafter, embeddings — is fetched).
+
+3. Transfer the bundle to the Proxmox host and the
+   `open_webui.tar`/`pgvector.tar` images to the Docker VM.
+4. `terraform.tfvars`: `ubuntu_lxc_template_preuploaded = true`;
+   `tofu apply`, then `scripts/proxmox-lxc-gpu.sh <CTID> --bundle ...`.
+5. `all.yml`: `airgap_mode: true`, `llm_bundle_dir: /airgap-bundle`.
+6. `ansible-playbook playbook.yml`.
+7. On the Docker VM: `docker load` both images, `OFFLINE_MODE=true`,
    `docker compose up -d --pull never`.
 
-Détails : [docs/AIRGAP.md](docs/AIRGAP.md).
+Details: [docs/AIRGAP.md](docs/AIRGAP.md).
 
-## La suite
+## Next
 
-- Profil VRAM, DFlash2/NVFP4, Docling GPU, OCR : [README](README.md).
-- Hôte Proxmox : [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md).
-- Airgap : [docs/AIRGAP.md](docs/AIRGAP.md).
-- Compose Open WebUI/PGVector : [deploy/openwebui/README.md](deploy/openwebui/README.md).
+- VRAM profile, DFlash2/NVFP4, Docling GPU, OCR: [README](README.md).
+- Proxmox host: [docs/HOST-INSTALL.md](docs/HOST-INSTALL.md).
+- Airgap: [docs/AIRGAP.md](docs/AIRGAP.md).
+- Open WebUI/PGVector compose: [deploy/openwebui/README.md](deploy/openwebui/README.md).

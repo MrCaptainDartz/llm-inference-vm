@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Attach the host NVIDIA GPU to an unprivileged Proxmox LXC for Docker/CUDA.
-# Run as root on the Proxmox host; see --help and docs/HOST-INSTALL.md.
+# Attach the host NVIDIA GPU to an unprivileged Proxmox LXC; run as root, see docs/HOST-INSTALL.md.
 set -euo pipefail
 
 usage() {

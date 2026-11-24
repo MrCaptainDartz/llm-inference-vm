@@ -32,9 +32,8 @@ NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-}"
 HF_TOKEN="${HF_TOKEN:-}"
 FORCE="${FORCE:-false}"
 
-# Bundle sections that --skip can disable, in manifest order.
+# Sections --skip can disable (manifest order), plus the `models` and `all` groups.
 SKIP_LEAF_SECTIONS=(host images model draft embedding apt tessdata)
-# Accepted --skip names: the leaf sections plus the `models` and `all` groups.
 SKIP_SECTIONS=("${SKIP_LEAF_SECTIONS[@]}" models all)
 declare -A SKIPPED=()
 
@@ -45,7 +44,6 @@ log()  { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-# `models` expands to the three Hugging Face repos, `all` to every section.
 mark_skip() {
   local section
   case "$1" in
@@ -58,7 +56,7 @@ mark_skip() {
 
 is_skipped() { [[ -n "${SKIPPED[$1]:-}" ]]; }
 
-# --skip accepts a comma-separated list: --skip=model or --skip=model,images
+# --skip takes a comma-separated list, e.g. --skip=model,images
 parse_skip_list() {
   local list="$1" item
   local -a items=()
@@ -88,8 +86,7 @@ skipped_sections() {
   done
 }
 
-# A skipped model section must still be present in the bundle: the roles mount
-# /airgap-bundle/models read-only and vLLM fails later without it.
+# A skipped model must still be in the bundle: roles mount it read-only and vLLM fails.
 warn_empty_models() {
   local section dir
   for section in model draft embedding; do
@@ -112,8 +109,7 @@ Usage: sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle [--skip=LI
 Options:
   --output DIR          Bundle directory (default: <repo>/airgap-bundle)
   --vllm-version VER    vLLM image tag (default: 0.34.0)
-  --skip LIST           Comma-separated sections to skip (default: none),
-                        e.g. --skip=model or --skip=model,images
+  --skip LIST           Comma-separated sections, e.g. --skip=model,images
   --force               Re-download files that already exist
   -h, --help            Show this help
 
@@ -128,8 +124,7 @@ Sections accepted by --skip:
   tessdata    French Tesseract data
   all         every section (e.g. to rewrite manifest/SHA256SUMS only)
 
-Skipping a section never deletes what is already in the bundle; existing files
-are left untouched and only the remaining sections are fetched.
+Skipping a section keeps existing files in the bundle and fetches the rest.
 
 Environment:
   TARGET_MODEL/DRAFT_MODEL/EMBEDDING_MODEL  Hugging Face repos to bundle
@@ -190,8 +185,7 @@ install_tools() {
   command -v "$SKOPEO" >/dev/null || die "skopeo not available"
 }
 
-# Download to <dest>.part, then atomically rename after curl.
-# HF_TOKEN goes through a temporary 0600 curl config, not the process list.
+# Download to <dest>.part then rename; HF_TOKEN goes through a temp 0600 curl config.
 fetch_url() {
   local url="$1" dest="$2" part="${2}.part" auth_config=""
   local -a curl_args=()
@@ -411,8 +405,7 @@ write_manifest() {
   [[ -f "${BUNDLE_DIR}/models/${EMBEDDING_MODEL_DIR}/.hf_revision" ]] && \
     embedding_revision=$(cat "${BUNDLE_DIR}/models/${EMBEDDING_MODEL_DIR}/.hf_revision")
 
-  local vllm_digest litellm_digest webui_digest docling_digest docling_cpu_digest pgvector_digest cuda_digest
-  vllm_digest=$(image_digest "$VLLM_IMAGE")
+  local vllm_digest litellm_digest webui_digest docling_digest docling_cpu_digest pgvector_digest cuda_digest  vllm_digest=$(image_digest "$VLLM_IMAGE")
   litellm_digest=$(image_digest "$LITELLM_IMAGE")
   webui_digest=$(image_digest "$OPEN_WEBUI_IMAGE")
   docling_digest=$(image_digest "$DOCLING_IMAGE")

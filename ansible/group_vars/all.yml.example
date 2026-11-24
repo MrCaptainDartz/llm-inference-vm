@@ -62,6 +62,6 @@ docling_ocr_lang: ["fr"]
 docker_gpu_smoke_test: true
 docker_gpu_smoke_image: "nvidia/cuda:13.0.0-base-ubuntu24.04"
 
-# Airgap deployment.
+# Airgap: apt, images and models come from the bundle.
 airgap_mode: false
 llm_bundle_dir: /airgap-bundle

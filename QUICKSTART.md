@@ -220,6 +220,11 @@ exposé au LAN.
    sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
    ```
 
+   Pour ne pas retélécharger une partie déjà présente, utiliser
+   `--skip=<section>[,<section>]` (par exemple `--skip=model` : le modèle de
+   chat est déjà sur le builder, le reste — driver, toolkit, template LXC,
+   images, drafter, embeddings — est récupéré).
+
 2. Transférer le bundle vers le Proxmox host et les images
    `open_webui.tar`/`pgvector.tar` vers la VM Docker.
 3. `terraform.tfvars` : `ubuntu_lxc_template_preuploaded = true` ;

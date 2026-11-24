@@ -2,9 +2,14 @@
 - name: Build the offline bundle on an internet-connected Ubuntu 26.04 host
   hosts: bundle_builder
   become: true
+  vars:
+    # Extra fetcher flags, e.g. -e '{"bundle_fetch_args": ["--skip=model"]}'.
+    bundle_fetch_args: []
   tasks:
     - name: Run the airgap bundle fetcher
       ansible.builtin.command:
-        cmd: "{{ playbook_dir }}/../scripts/fetch-airgap-bundle.sh --output {{ playbook_dir }}/../airgap-bundle"
+        argv: "{{ [playbook_dir + '/../scripts/fetch-airgap-bundle.sh',
+                   '--output', playbook_dir + '/../airgap-bundle']
+                  + bundle_fetch_args }}"
         chdir: "{{ playbook_dir }}/.."
       changed_when: true

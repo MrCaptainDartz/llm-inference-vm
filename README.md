@@ -306,6 +306,11 @@ Tout est embarqué dans un bundle construit sur un builder connecté :
 sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
 ```
 
+`--skip=<section>[,<section>]` exclut une partie du bundle
+(`host`, `images`, `model`, `draft`, `embedding`, `models`, `apt`, `tessdata`,
+`all`) sans jamais supprimer ce qui est déjà téléchargé, par exemple
+`--skip=model` quand le modèle de chat est déjà sur le builder.
+
 Puis transférer, installer le driver/toolkit, créer le LXC, lancer Ansible, et
 déployer Open WebUI/PGVector sur la VM Docker via les images
 `open_webui.tar`/`pgvector.tar`. Détails et layout :

@@ -17,7 +17,9 @@ Le build doit tourner sur **Ubuntu 26.04** : il utilise `apt`, `dpkg`, `skopeo`
 et un conteneur Ubuntu. Ansible (`ansible/playbook-download.yml`) sert à
 piloter ce builder depuis ton poste (Mac inclus) via SSH ; il ne remplace pas
 Ubuntu pour le build. Pour builder depuis macOS sans machine Ubuntu, il faut
-une VM/container Linux.
+une VM/container Linux. Le playbook transmet les arguments supplémentaires
+via `bundle_fetch_args` (liste), par exemple
+`-e '{"bundle_fetch_args": ["--skip=model"]}'`.
 
 ## 1. Construire le bundle (machine en ligne)
 
@@ -66,10 +68,40 @@ NVIDIA_DRIVER_VERSION=595.104.02 sudo ./scripts/fetch-airgap-bundle.sh
 # Modèle Hugging Face gated
 HF_TOKEN=hf_xxx sudo ./scripts/fetch-airgap-bundle.sh
 
-# Reprendre un build interrompu
-sudo ./scripts/fetch-airgap-bundle.sh --skip-apt --skip-tessdata
+# Reprendre un build interrompu : ne retélécharger que ce qui manque
+sudo ./scripts/fetch-airgap-bundle.sh --skip=apt,tessdata
+
+# Le modèle de chat a déjà été téléchargé sur le builder : ne chercher que
+# le reste (driver, toolkit, template LXC, images, drafter, embeddings,
+# repo apt, tessdata)
+sudo ./scripts/fetch-airgap-bundle.sh --skip=model
+
+# Plusieurs sections d'un coup
+sudo ./scripts/fetch-airgap-bundle.sh --skip=model,images
+
 sudo ./scripts/fetch-airgap-bundle.sh --force   # tout re-télécharger
 ```
+
+`--skip` prend une liste de sections séparée par des virgules :
+
+| Section | Ce qui n'est pas téléchargé |
+|---|---|
+| `host` | driver `.run`, `.deb` du toolkit, template LXC |
+| `images` | tarballs d'images (`vllm.tar`, `docling.tar`, …) |
+| `model` | modèle de chat (`TARGET_MODEL`, `models/qwen3.8-27b-nvfp4/`) |
+| `draft` | drafter DFlash2 (`models/qwen3.8-27b-dflash2-draft/`) |
+| `embedding` | `Qwen3-Embedding-0.6B` (`models/qwen3-embedding-0.6b/`) |
+| `models` | les trois modèles Hugging Face ci-dessus |
+| `apt` | closure apt Ubuntu + `Packages.gz` |
+| `tessdata` | données Tesseract françaises |
+| `all` | toutes les sections (régénérer seulement `manifest.json`/`SHA256SUMS`) |
+
+Un skip ne supprime jamais ce qui est déjà dans le bundle : les fichiers
+présents sont laissés tels quels et les sections restantes sont seules
+téléchargées. Les sections sautées sont listées dans `manifest.json`
+(`skipped`) et rappelées en fin d'exécution. Si une section de modèle est
+sautée alors que son dossier `models/...` est vide, le script le signale : le
+bundle est alors incomplet pour vLLM.
 
 Le bundle pèse plusieurs dizaines de Go (modèles + images + repo apt).
 Vérifier son intégrité avant transfert :
@@ -259,7 +291,9 @@ curl -s -H "Authorization: Bearer $LITELLM_KEY" \
 ## 8. Notes
 
 - Le bundle est figé au moment du build ; `manifest.json` permet de savoir
-  exactement quelles images/modèles sont installés.
+  exactement quelles images/modèles sont installés. Le champ `skipped` liste
+  les sections volontairement omises (`--skip=`) : un bundle partiel se
+  repère donc sans relire la commande.
 - Les images `open-webui:v0.13.4` et `pgvector/pgvector:pg17` sont épinglées ;
   `litellm:main-stable` est résolue au build et conservée dans le tarball.
 - Le script prend par défaut le **dernier driver stable 595.x** via

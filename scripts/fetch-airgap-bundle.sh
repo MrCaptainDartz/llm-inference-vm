@@ -32,11 +32,11 @@ NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-}"
 HF_TOKEN="${HF_TOKEN:-}"
 FORCE="${FORCE:-false}"
 
-SKIP_HOST=false
-SKIP_IMAGES=false
-SKIP_MODELS=false
-SKIP_APT=false
-SKIP_TESSDATA=false
+# Bundle sections that --skip can disable, in manifest order.
+SKIP_LEAF_SECTIONS=(host images model draft embedding apt tessdata)
+# Accepted --skip names: the leaf sections plus the `models` and `all` groups.
+SKIP_SECTIONS=("${SKIP_LEAF_SECTIONS[@]}" models all)
+declare -A SKIPPED=()
 
 RUNTIME=""
 SKOPEO=""
@@ -45,22 +45,94 @@ log()  { printf '\n==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# `models` expands to the three Hugging Face repos, `all` to every section.
+mark_skip() {
+  local section
+  case "$1" in
+    host|images|apt|tessdata|model|draft|embedding) SKIPPED["$1"]=true ;;
+    models) SKIPPED[model]=true; SKIPPED[draft]=true; SKIPPED[embedding]=true ;;
+    all) for section in "${SKIP_LEAF_SECTIONS[@]}"; do SKIPPED["$section"]=true; done ;;
+    *) die "unknown --skip value: $1 (valid: ${SKIP_SECTIONS[*]})" ;;
+  esac
+}
+
+is_skipped() { [[ -n "${SKIPPED[$1]:-}" ]]; }
+
+# --skip accepts a comma-separated list: --skip=model or --skip=model,images
+parse_skip_list() {
+  local list="$1" item
+  local -a items=()
+  [[ -n "${list//[[:space:]]/}" ]] || die "--skip needs at least one section (valid: ${SKIP_SECTIONS[*]})"
+  IFS=',' read -ra items <<<"$list"
+  for item in "${items[@]}"; do
+    item="${item//[[:space:]]/}"
+    [[ -n "$item" ]] || continue
+    mark_skip "$item"
+  done
+}
+
+# Run a fetch step unless its section was excluded.
+run_section() {
+  local section="$1"; shift
+  if is_skipped "$section"; then
+    info "skipped: ${section}"
+    return 0
+  fi
+  "$@"
+}
+
+skipped_sections() {
+  local section
+  for section in "${SKIP_LEAF_SECTIONS[@]}"; do
+    if is_skipped "$section"; then printf '%s\n' "$section"; fi
+  done
+}
+
+# A skipped model section must still be present in the bundle: the roles mount
+# /airgap-bundle/models read-only and vLLM fails later without it.
+warn_empty_models() {
+  local section dir
+  for section in model draft embedding; do
+    is_skipped "$section" || continue
+    case "$section" in
+      model) dir="$TARGET_MODEL_DIR" ;;
+      draft) dir="$DRAFT_MODEL_DIR" ;;
+      embedding) dir="$EMBEDDING_MODEL_DIR" ;;
+    esac
+    if ! compgen -G "${BUNDLE_DIR}/models/${dir}/*" >/dev/null; then
+      info "warning: models/${dir}/ is empty (section skipped, copy it manually)"
+    fi
+  done
+}
+
 usage() {
   cat <<'EOF'
-Usage: sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle
+Usage: sudo ./scripts/fetch-airgap-bundle.sh --output ./airgap-bundle [--skip=LIST]
 
 Options:
   --output DIR          Bundle directory (default: <repo>/airgap-bundle)
   --vllm-version VER    vLLM image tag (default: 0.34.0)
-  --skip-host           Do not download host driver/toolkit/LXC template
-  --skip-images         Do not copy container images
-  --skip-models         Do not download Hugging Face models
-  --skip-apt            Do not build the Ubuntu apt repository
-  --skip-tessdata       Do not download the French Tesseract data
+  --skip LIST           Comma-separated sections to skip (default: none),
+                        e.g. --skip=model or --skip=model,images
   --force               Re-download files that already exist
   -h, --help            Show this help
 
+Sections accepted by --skip:
+  host        NVIDIA driver .run, container toolkit .deb, Ubuntu LXC template
+  images      container image tarballs
+  model       chat model (TARGET_MODEL)
+  draft       DFlash2 draft model (DRAFT_MODEL)
+  embedding   embedding model (EMBEDDING_MODEL)
+  models      all three Hugging Face models
+  apt         Ubuntu apt closure + Packages.gz
+  tessdata    French Tesseract data
+  all         every section (e.g. to rewrite manifest/SHA256SUMS only)
+
+Skipping a section never deletes what is already in the bundle; existing files
+are left untouched and only the remaining sections are fetched.
+
 Environment:
+  TARGET_MODEL/DRAFT_MODEL/EMBEDDING_MODEL  Hugging Face repos to bundle
   NVIDIA_DRIVER_VERSION  Pin the NVIDIA driver (empty = latest stable 595.x)
   HF_TOKEN               Hugging Face token for gated models
   VLLM_IMAGE/LITELLM_IMAGE/OPEN_WEBUI_IMAGE/DOCLING_IMAGE/DOCLING_CPU_IMAGE/PGVECTOR_IMAGE/CUDA_SMOKE_IMAGE/TESSDATA_URL
@@ -77,11 +149,11 @@ while [[ $# -gt 0 ]]; do
     --vllm-version)
       [[ $# -ge 2 ]] || die "$1 needs a version"
       VLLM_VERSION="$2"; VLLM_IMAGE="vllm/vllm-openai:${VLLM_VERSION}"; shift 2 ;;
-    --skip-host) SKIP_HOST=true; shift ;;
-    --skip-images) SKIP_IMAGES=true; shift ;;
-    --skip-models) SKIP_MODELS=true; shift ;;
-    --skip-apt) SKIP_APT=true; shift ;;
-    --skip-tessdata) SKIP_TESSDATA=true; shift ;;
+    --skip)
+      [[ $# -ge 2 ]] || die "$1 needs a section list (use --help)"
+      parse_skip_list "$2"; shift 2 ;;
+    --skip=*)
+      parse_skip_list "${1#*=}"; shift ;;
     --force) FORCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (use --help)" ;;
@@ -228,9 +300,15 @@ PY
   info "NVIDIA toolkit debs: ${count} files"
 }
 
-fetch_host_images() {
+fetch_lxc_template() {
   log "Ubuntu LXC template"
   fetch_url "$LXC_TEMPLATE_URL" "${BUNDLE_DIR}/host/${LXC_TEMPLATE_FILENAME}"
+}
+
+fetch_host() {
+  fetch_nvidia_driver
+  fetch_nvidia_toolkit
+  fetch_lxc_template
 }
 
 fetch_images() {
@@ -263,10 +341,12 @@ fetch_hf_model() {
 }
 
 fetch_models() {
-  log "Models"
-  fetch_hf_model "$TARGET_MODEL" "$TARGET_MODEL_DIR" "$TARGET_MODEL_URL"
-  fetch_hf_model "$DRAFT_MODEL" "$DRAFT_MODEL_DIR" "$DRAFT_MODEL_URL"
-  fetch_hf_model "$EMBEDDING_MODEL" "$EMBEDDING_MODEL_DIR" "$EMBEDDING_MODEL_URL"
+  run_section model fetch_hf_model \
+    "$TARGET_MODEL" "$TARGET_MODEL_DIR" "$TARGET_MODEL_URL"
+  run_section draft fetch_hf_model \
+    "$DRAFT_MODEL" "$DRAFT_MODEL_DIR" "$DRAFT_MODEL_URL"
+  run_section embedding fetch_hf_model \
+    "$EMBEDDING_MODEL" "$EMBEDDING_MODEL_DIR" "$EMBEDDING_MODEL_URL"
 }
 
 APT_PACKAGES=(
@@ -340,7 +420,7 @@ write_manifest() {
   pgvector_digest=$(image_digest "$PGVECTOR_IMAGE")
   cuda_digest=$(image_digest "$CUDA_SMOKE_IMAGE")
 
-  if [[ "$SKIP_IMAGES" != "true" ]]; then
+  if ! is_skipped images; then
     [[ -n "$vllm_digest" ]] || die "cannot resolve the vLLM image digest"
     [[ -n "$litellm_digest" ]] || die "cannot resolve the LiteLLM image digest"
     [[ -n "$webui_digest" ]] || die "cannot resolve the Open WebUI image digest"
@@ -352,6 +432,7 @@ write_manifest() {
 
   jq -n \
     --arg generated "$(date -Is)" \
+    --argjson skipped "$(skipped_sections | jq -R . | jq -s .)" \
     --arg vllm_image "$VLLM_IMAGE" \
     --arg vllm_digest "$vllm_digest" \
     --arg litellm_image "$LITELLM_IMAGE" \
@@ -382,6 +463,7 @@ write_manifest() {
     --arg ubuntu_release "$UBUNTU_RELEASE" \
     '{
       generated_at: $generated,
+      skipped: $skipped,
       images: {
         vllm: {reference: $vllm_image, digest: $vllm_digest},
         litellm: {reference: $litellm_image, digest: $litellm_digest},
@@ -422,13 +504,19 @@ write_checksums() {
 install_tools
 mkdir -p "${BUNDLE_DIR}"/{host,images,models,repo/pool,tessdata}
 
-[[ "$SKIP_HOST" == "true" ]] || { fetch_nvidia_driver; fetch_nvidia_toolkit; fetch_host_images; }
-[[ "$SKIP_IMAGES" == "true" ]] || fetch_images
-[[ "$SKIP_MODELS" == "true" ]] || fetch_models
-[[ "$SKIP_APT" == "true" ]] || build_apt_repo
-[[ "$SKIP_TESSDATA" == "true" ]] || fetch_tessdata
+run_section host fetch_host
+run_section images fetch_images
+fetch_models
+run_section apt build_apt_repo
+run_section tessdata fetch_tessdata
 write_manifest
 write_checksums
+
+if [[ ${#SKIPPED[@]} -gt 0 ]]; then
+  log "Partial bundle: skipped $(skipped_sections | paste -sd, -)"
+  info "Files already present for skipped sections were kept as-is."
+  warn_empty_models
+fi
 
 log "Bundle ready: ${BUNDLE_DIR}"
 du -sh "${BUNDLE_DIR}"/* 2>/dev/null || true

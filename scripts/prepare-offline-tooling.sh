@@ -290,6 +290,10 @@ EOF
 [[ -n "$PLATFORM" ]] || PLATFORM=$(detect_platform)
 mkdir -p "$BIN_DIR"
 
+if [[ ${EUID} -eq 0 ]]; then
+  die "run without sudo: binaries and config must belong to your user, not /root"
+fi
+
 info "about 150 MB to download; the first run can take a few minutes"
 
 run_section tofu install_tofu
@@ -298,9 +302,13 @@ run_section collections install_collections
 run_section mirror install_mirror
 run_section tofu-rc write_tofu_rc
 
-if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
-  info "warning: ${BIN_DIR} is not in PATH"
-fi
+shell_rc() {
+  case "${SHELL:-}" in
+    */zsh) printf '%s\n' "${HOME}/.zshrc" ;;
+    */bash) printf '%s\n' "${HOME}/.bashrc" ;;
+    *) printf '%s\n' "${HOME}/.profile" ;;
+  esac
+}
 
 log "Offline toolchain ready"
 printf '    platform:    %s\n' "$PLATFORM"
@@ -308,6 +316,24 @@ if [[ -d "$MIRROR_DIR" ]]; then
   printf '    mirror:      %s (%s)\n' "$MIRROR_DIR" "$(du -sh "$MIRROR_DIR" | cut -f1)"
 fi
 printf '    collections: %s\n' "$COLLECTIONS_DIR"
+if [[ -x "${BIN_DIR}/tofu" ]]; then
+  printf '    tofu:        %s\n' "${BIN_DIR}/tofu"
+elif command -v tofu >/dev/null; then
+  printf '    tofu:        %s\n' "$(command -v tofu)"
+fi
+if [[ -x "${BIN_DIR}/ansible-playbook" ]]; then
+  printf '    ansible:     %s\n' "${BIN_DIR}/ansible-playbook"
+elif command -v ansible-playbook >/dev/null; then
+  printf '    ansible:     %s\n' "$(command -v ansible-playbook)"
+fi
+
+if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
+  log "${BIN_DIR} is not in PATH"
+  info "add it once, then open a new shell:"
+  printf '    echo '\''export PATH="%s:$PATH"'\'' >> %s\n' "$BIN_DIR" "$(shell_rc)"
+  info "or for this shell only:"
+  printf '    export PATH="%s:$PATH"\n' "$BIN_DIR"
+fi
 cat <<'EOF'
 
 Verify without network:

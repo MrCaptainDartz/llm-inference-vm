@@ -22,9 +22,6 @@ services:
 {% endif %}
     ports:
       - "127.0.0.1:8000:8000"
-    ulimits:
-      memlock: -1
-      stack: 67108864
     command:
       - "--model"
       - "{{ vllm_model_path }}"
@@ -84,9 +81,6 @@ services:
 {% else %}
       - "{{ inference_stack_hf_cache_dir }}:/root/.cache/huggingface"
 {% endif %}
-    ulimits:
-      memlock: -1
-      stack: 67108864
     command:
       - "--model"
       - "{{ vllm_embedding_model_path }}"

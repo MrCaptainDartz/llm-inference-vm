@@ -292,6 +292,11 @@ Watch points:
 - if the sm120 NVFP4/DFlash decode crashes, set `vllm_enforce_eager: true`;
 - if `--reasoning-parser qwen3` / `--tool-call-parser qwen3_coder` do not
   exist in the vLLM image, clear them in `all.yml`;
+- no `memlock` ulimit in the compose: an unprivileged LXC cannot raise
+  RLIMIT_MEMLOCK (`error setting rlimit type 8: operation not permitted`). For
+  multi-GPU/NCCL, set `lxc.prlimit.memlock: unlimited` in
+  `/etc/pve/lxc/<id>.conf`, restart the LXC, then re-add
+  `ulimits: {memlock: -1}`;
 - never expose vLLM (8000) on the LAN: only LiteLLM (4000) and Docling (5001)
   are published, protected by their keys.
 
